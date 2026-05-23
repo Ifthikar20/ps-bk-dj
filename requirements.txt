@@ -1,0 +1,42 @@
+# --- Core ---
+Django==5.1.4
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+djangorestframework-camel-case==1.4.2
+django-filter==24.3
+django-cors-headers==4.6.0
+
+# --- Database / cache ---
+psycopg[binary]==3.2.3
+redis==5.2.1
+hiredis==3.1.0
+
+# --- Async jobs ---
+celery==5.4.0
+django-celery-results==2.5.1
+
+# --- Storage ---
+django-storages==1.14.4
+boto3==1.35.76
+
+# --- AI + ingestion ---
+google-generativeai==0.8.3
+trafilatura==1.12.2
+pypdf==5.1.0
+python-docx==1.1.2
+pytesseract==0.3.13
+Pillow==11.0.0
+
+# --- Auth (social) ---
+google-auth==2.37.0
+PyJWT[crypto]==2.10.1
+cryptography==44.0.0
+
+# --- Serving / ops ---
+gunicorn==23.0.0
+uvicorn[standard]==0.34.0
+python-decouple==3.8
+dj-database-url==2.3.0
+sentry-sdk==2.19.2
+pydantic==2.10.4
+requests==2.32.3
