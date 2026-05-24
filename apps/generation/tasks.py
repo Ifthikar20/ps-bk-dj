@@ -88,8 +88,15 @@ def generate_study_set(self, study_set_id):
                 usage_count=F("usage_count") + 1
             )
 
-        # Reward points are awarded by the client via POST /rewards/activity
-        # ("Created a study set"), keeping all reward writes on one path.
+        # Award creation points server-side, idempotently (one award per set)
+        # so it can't be farmed by replaying a client request.
+        from apps.rewards.services import award
+
+        award(
+            study_set.owner,
+            reason="Created a study set",
+            dedupe_key=f"studyset:{study_set_id}",
+        )
 
         logger.info(
             "Generated StudySet %s in %.1fs (quiz=%d words=%d)",

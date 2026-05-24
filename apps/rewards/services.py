@@ -14,19 +14,48 @@ from apps.common.exceptions import DomainError
 from .models import PointEvent, RewardProfile
 
 
+# Reasons the client may self-report (in-app gameplay the server can't observe).
+# Creation + exam-session rewards are awarded server-side on the real event, so
+# they are NOT accepted from the client.
+CLIENT_REPORTABLE_REASONS = {
+    "Finished a quiz",
+    "Guessed a word",
+    "Super Dash checkpoint",
+}
+
+# Hard ceilings per reason so a tampered context can't mint huge point totals.
+_MAX_POINTS = {
+    "Created a study set": 20,
+    "Finished a quiz": 55,        # score capped at 10
+    "Guessed a word": 15,
+    "Super Dash checkpoint": 5,
+    "Daily exam session": 60,     # correct capped at 10
+}
+
+
+def _int(value, lo=0, hi=10_000) -> int:
+    """Coerce untrusted context numbers into a sane bounded int."""
+    try:
+        return max(lo, min(hi, int(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _points_for(reason: str, context: dict) -> int:
     context = context or {}
     if reason == "Created a study set":
-        return 20
-    if reason == "Finished a quiz":
-        return 5 + int(context.get("score", 0)) * 5
-    if reason == "Guessed a word":
-        return max(0, 15 - int(context.get("mistakes", 0)) * 2)
-    if reason == "Super Dash checkpoint":
-        return 5
-    if reason == "Daily exam session":
-        return 10 + int(context.get("correct", 0)) * 5
-    raise DomainError(f"Unknown reward reason: {reason}", code="unknown_reason")
+        points = 20
+    elif reason == "Finished a quiz":
+        points = 5 + _int(context.get("score")) * 5
+    elif reason == "Guessed a word":
+        points = max(0, 15 - _int(context.get("mistakes")) * 2)
+    elif reason == "Super Dash checkpoint":
+        points = 5
+    elif reason == "Daily exam session":
+        points = 10 + _int(context.get("correct")) * 5
+    else:
+        raise DomainError(f"Unknown reward reason: {reason}", code="unknown_reason")
+    return min(points, _MAX_POINTS.get(reason, points))
 
 
 def _user_today(user) -> str:
@@ -51,7 +80,7 @@ def effective_streak(profile: RewardProfile, today: str) -> int:
 
 
 @transaction.atomic
-def award(user, reason: str, context: dict | None = None) -> dict:
+def award(user, reason: str, context: dict | None = None, dedupe_key: str | None = None) -> dict:
     points = _points_for(reason, context or {})
     today = _user_today(user)
 
@@ -60,6 +89,13 @@ def award(user, reason: str, context: dict | None = None) -> dict:
         .get_or_create(user=user)[0]
     )
     profile.refresh_from_db()
+
+    # Idempotency: a real-world event keyed by dedupe_key is only ever awarded
+    # once, even on retries / concurrent requests.
+    if dedupe_key and PointEvent.objects.filter(
+        user=user, dedupe_key=dedupe_key
+    ).exists():
+        return {"profile": profile, "last_award": 0, "last_reason": reason}
 
     last = profile.last_active_ymd
     yesterday = _ymd_offset(today, -1)
@@ -74,7 +110,9 @@ def award(user, reason: str, context: dict | None = None) -> dict:
     profile.last_active_ymd = today
     profile.save(update_fields=["points", "streak", "last_active_ymd"])
 
-    PointEvent.objects.create(user=user, points=points, reason=reason)
+    PointEvent.objects.create(
+        user=user, points=points, reason=reason, dedupe_key=dedupe_key
+    )
 
     return {"profile": profile, "last_award": points, "last_reason": reason}
 

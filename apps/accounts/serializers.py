@@ -12,6 +12,34 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Mutable profile fields. Email/provider are intentionally not editable."""
+
+    class Meta:
+        model = User
+        fields = ("name", "avatar_url", "timezone")
+        extra_kwargs = {
+            "name": {"required": False},
+            "avatar_url": {"required": False},
+            "timezone": {"required": False},
+        }
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name cannot be empty.")
+        return value
+
+    def validate_timezone(self, value):
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise serializers.ValidationError("Unknown timezone.")
+        return value
+
+
 class EmailAuthSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)

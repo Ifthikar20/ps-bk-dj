@@ -164,8 +164,9 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "user": "1000/day",
         "anon": "60/hour",
-        "auth": "10/min",        # brute-force protection on login
-        "generation": "10/hour",  # expensive AI generation
+        "auth": "10/min",         # brute-force protection on login
+        "generation": "10/hour",   # expensive AI generation
+        "rewards": "120/hour",     # bound client-reported point farming
     },
 }
 
@@ -248,6 +249,18 @@ ALLOWED_UPLOAD_EXTENSIONS = [
 # Social auth
 GOOGLE_OAUTH_CLIENT_IDS = config("GOOGLE_OAUTH_CLIENT_IDS", default="", cast=Csv())
 APPLE_BUNDLE_IDS = config("APPLE_BUNDLE_IDS", default="", cast=Csv())
+
+# --------------------------------------------------------------------------- #
+# Request hardening (applies in every environment)
+# --------------------------------------------------------------------------- #
+# Cap request body size to blunt memory-exhaustion / oversized-payload abuse.
+DATA_UPLOAD_MAX_MEMORY_SIZE = config(
+    "DATA_UPLOAD_MAX_MEMORY_SIZE", default=5 * 1024 * 1024, cast=int
+)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"

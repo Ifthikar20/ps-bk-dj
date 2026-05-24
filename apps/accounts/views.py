@@ -12,6 +12,7 @@ from apps.common.throttles import AuthThrottle
 
 from .serializers import (
     EmailAuthSerializer,
+    ProfileUpdateSerializer,
     ProviderAuthSerializer,
     RefreshSerializer,
     SignOutSerializer,
@@ -62,7 +63,8 @@ class EmailAuthView(APIView):
                 raise InvalidCredentials()
             return Response(auth_payload(user))
 
-        # New account — enforce real password rules.
+        # New account — enforce real password rules. Return 200 (not 201) like
+        # the login path so the response can't be used to enumerate accounts.
         run_password_validators(password)
         with transaction.atomic():
             user = User.objects.create_user(
@@ -71,7 +73,7 @@ class EmailAuthView(APIView):
                 name=name or email.split("@")[0],
                 provider=User.Provider.EMAIL,
             )
-        return Response(auth_payload(user), status=status.HTTP_201_CREATED)
+        return Response(auth_payload(user))
 
 
 class ProviderAuthView(APIView):
@@ -160,3 +162,12 @@ class MeView(APIView):
                 ).data,
             }
         )
+
+    def patch(self, request):
+        """Update the signed-in user's profile (name / avatar / timezone)."""
+        serializer = ProfileUpdateSerializer(
+            request.user, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"user": UserSerializer(request.user).data})

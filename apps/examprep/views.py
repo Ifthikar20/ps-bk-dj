@@ -35,8 +35,16 @@ class ExamPlanViewSet(viewsets.ModelViewSet):
             },
         )
 
-        # The "Daily exam session" reward is posted by the client via
-        # /rewards/activity, keeping all reward writes on one path.
+        # Award the daily-session reward server-side, idempotent per plan+day,
+        # so re-opening the same day can't repeatedly mint points.
+        from apps.rewards.services import award
+
+        award(
+            request.user,
+            reason="Daily exam session",
+            context={"correct": data["correct"], "total": data["total"]},
+            dedupe_key=f"examsession:{plan.id}:{data['day']}",
+        )
 
         plan.refresh_from_db()
         return Response(ExamPlanSerializer(plan, context={"request": request}).data)

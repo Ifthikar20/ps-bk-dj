@@ -15,15 +15,28 @@ class RewardProfile(models.Model):
 
 
 class PointEvent(models.Model):
-    """Audit log so points can't be forged client-side."""
+    """Audit log so points can't be forged client-side.
+
+    ``dedupe_key`` makes server-awarded events idempotent: awarding the same
+    real-world event twice (e.g. a retried generation, or re-opening the same
+    exam day) is a no-op.
+    """
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="point_events"
     )
     points = models.IntegerField()
     reason = models.CharField(max_length=64)
+    dedupe_key = models.CharField(max_length=128, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-created_at",)
         indexes = [models.Index(fields=["user", "-created_at"])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "dedupe_key"],
+                name="unique_user_dedupe_key",
+                condition=models.Q(dedupe_key__isnull=False),
+            )
+        ]
