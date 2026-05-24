@@ -23,14 +23,21 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM = "You are a study-aid generator. You only output valid JSON."
 
-_PROMPT = """From the SOURCE TEXT below, produce a compact study set as a single \
-JSON object with EXACTLY these keys:
-- "title": a short topic title (<= 60 chars).
-- "summary": a 3-5 sentence overview.
-- "keyPoints": array of 3-7 concise bullet strings.
-- "topics": array of 2-5 short topic labels used to tag quiz questions.
-- "quiz": array of 5-10 objects, each {{"prompt", "choices" (4 strings), \
-"correctIndex" (0-based int), "explanation" (one sentence), "topic" (from topics)}}.
+_PROMPT = """Turn the SOURCE TEXT into a study guide. Do NOT over-summarise: keep \
+the real definitions, details and nuance — reorganise the material into readable \
+sections and only shorten wordy passages so each section is easy to read.
+
+Return a single JSON object with EXACTLY these keys:
+- "title": a short title for the whole set (<= 60 chars).
+- "sections": array of 2-6 objects (split the material by sub-topic), each:
+   - "title": a short section heading.
+   - "content": 1-3 short paragraphs that PRESERVE the key definitions and \
+details of this part of the source (readable chunks, NOT a one-line summary).
+   - "example": one concrete, real-world example that makes the section \
+relatable to everyday life.
+   - "quiz": questions about THIS section only, scaled to its complexity — a \
+simple section gets 2, a dense/complex one up to 6. Each: {{"prompt", "choices" \
+(4 strings), "correctIndex" (0-based int), "explanation" (one sentence)}}.
 - "wordGame": array of 3-6 objects, each {{"word" (2-12 A-Z letters, no spaces), \
 "clue" (one sentence)}}.
 Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
@@ -42,25 +49,34 @@ SOURCE TEXT:
 """
 
 # Gemini understands a response schema; OpenAI-compatible servers get json_object.
+_QUIZ_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string"},
+            "choices": {"type": "array", "items": {"type": "string"}},
+            "correctIndex": {"type": "integer"},
+            "explanation": {"type": "string"},
+        },
+        "required": ["prompt", "choices", "correctIndex"],
+    },
+}
 _GEMINI_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
-        "summary": {"type": "string"},
-        "keyPoints": {"type": "array", "items": {"type": "string"}},
-        "topics": {"type": "array", "items": {"type": "string"}},
-        "quiz": {
+        "sections": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string"},
-                    "choices": {"type": "array", "items": {"type": "string"}},
-                    "correctIndex": {"type": "integer"},
-                    "explanation": {"type": "string"},
-                    "topic": {"type": "string"},
+                    "title": {"type": "string"},
+                    "content": {"type": "string"},
+                    "example": {"type": "string"},
+                    "quiz": _QUIZ_SCHEMA,
                 },
-                "required": ["prompt", "choices", "correctIndex"],
+                "required": ["title", "content"],
             },
         },
         "wordGame": {
@@ -75,29 +91,36 @@ _GEMINI_SCHEMA = {
             },
         },
     },
-    "required": ["title", "summary", "quiz"],
+    "required": ["title", "sections"],
 }
 
 
 def _normalize_keys(raw: dict) -> dict:
-    """Map camelCase LLM keys to the snake_case our pydantic schema expects."""
-    quiz = []
-    for q in raw.get("quiz", []) or []:
-        quiz.append(
+    """Map the LLM's camelCase section JSON to our snake_case pydantic schema."""
+    sections = []
+    for s in raw.get("sections", []) or []:
+        quiz = []
+        for q in s.get("quiz", []) or []:
+            quiz.append(
+                {
+                    "prompt": q.get("prompt", ""),
+                    "choices": q.get("choices", []),
+                    "correct_index": q.get("correctIndex", q.get("correct_index", 0)),
+                    "explanation": q.get("explanation", "") or "",
+                    "topic": s.get("title", "General") or "General",
+                }
+            )
+        sections.append(
             {
-                "prompt": q.get("prompt", ""),
-                "choices": q.get("choices", []),
-                "correct_index": q.get("correctIndex", q.get("correct_index", 0)),
-                "explanation": q.get("explanation", "") or "",
-                "topic": q.get("topic", "General") or "General",
+                "title": s.get("title", "") or "Section",
+                "content": s.get("content", "") or "",
+                "example": s.get("example", "") or "",
+                "quiz": quiz,
             }
         )
     return {
-        "title": raw.get("title", ""),
-        "summary": raw.get("summary", ""),
-        "key_points": raw.get("keyPoints", raw.get("key_points", [])) or [],
-        "topics": raw.get("topics", []) or [],
-        "quiz": quiz,
+        "title": raw.get("title", "") or "Study set",
+        "sections": sections,
         "word_game": raw.get("wordGame", raw.get("word_game", [])) or [],
     }
 
@@ -260,3 +283,59 @@ def run_llm(text: str) -> tuple[GenerationResult, dict]:
             last_error = exc
             logger.warning("LLM(%s) call failed (attempt %s): %s", name, attempt + 1, exc)
     raise GenerationError(f"AI returned malformed content: {last_error}")
+
+
+# Large uploads are split so the model sees the whole thing (nothing dropped),
+# then the per-chunk sections are merged into one study set.
+CHUNK_CHARS = 12000
+
+
+def _chunk(text: str, limit: int = CHUNK_CHARS) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks, buf = [], ""
+    for para in text.split("\n\n"):
+        if buf and len(buf) + len(para) + 2 > limit:
+            chunks.append(buf)
+            buf = ""
+        # A single mammoth paragraph still has to be hard-split.
+        while len(para) > limit:
+            chunks.append(para[:limit])
+            para = para[limit:]
+        buf = f"{buf}\n\n{para}" if buf else para
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
+def generate(text: str) -> tuple[GenerationResult, dict]:
+    """Generate a sectioned study set, chunking large source text and merging.
+
+    Returns (GenerationResult, aggregated token-usage dict).
+    """
+    chunks = _chunk(text)
+    if len(chunks) == 1:
+        return run_llm(chunks[0])
+
+    sections, words, title = [], [], ""
+    usage = {"provider": "", "model": "", "input_tokens": 0, "output_tokens": 0}
+    for ch in chunks:
+        res, u = run_llm(ch)
+        title = title or res.title
+        sections.extend(res.sections)
+        words.extend(res.word_game)
+        usage["provider"] = u.get("provider", usage["provider"])
+        usage["model"] = u.get("model", usage["model"])
+        usage["input_tokens"] += u.get("input_tokens", 0)
+        usage["output_tokens"] += u.get("output_tokens", 0)
+
+    seen, deduped = set(), []
+    for w in words:
+        if w.word not in seen:
+            seen.add(w.word)
+            deduped.append(w)
+
+    merged = GenerationResult(
+        title=title or "Study set", sections=sections, word_game=deduped
+    )
+    return merged, usage

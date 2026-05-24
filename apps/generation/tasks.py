@@ -10,7 +10,7 @@ from apps.studysets.models import QuizQuestion, StudySet, WordChallenge
 from apps.subscriptions.models import Subscription
 
 from .extraction import extract_text
-from .llm import run_llm
+from .llm import generate
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,31 @@ def generate_study_set(self, study_set_id):
         if len(text) < 50:
             raise GenerationError("Not enough readable content to generate from.")
 
-        result, usage = run_llm(text)
+        result, usage = generate(text)
+
+        # Flatten sections for the legacy/flat fields + build the sections JSON.
+        sections_json = [
+            {
+                "title": sec.title,
+                "content": sec.content,
+                "example": sec.example,
+                "quiz": [
+                    {
+                        "prompt": q.prompt,
+                        "choices": q.choices,
+                        "correctIndex": q.correct_index,
+                        "explanation": q.explanation,
+                        "topic": q.topic,
+                    }
+                    for q in sec.quiz
+                ],
+            }
+            for sec in result.sections
+        ]
+        all_quiz = [q for sec in result.sections for q in sec.quiz]
+        section_titles = [sec.title for sec in result.sections]
+        # Short preview for the library card (first section, trimmed).
+        summary_preview = (result.sections[0].content[:280] if result.sections else "")
 
         # Track token spend for this user (best-effort; never fail generation).
         try:
@@ -63,9 +87,10 @@ def generate_study_set(self, study_set_id):
 
         with transaction.atomic():
             s = StudySet.objects.select_for_update().get(id=study_set_id)
-            s.summary = result.summary
-            s.key_points = result.key_points
-            s.topics = result.topics
+            s.sections = sections_json
+            s.summary = summary_preview
+            s.key_points = section_titles
+            s.topics = section_titles
             s.title = s.title or result.title or _derive_title(
                 s.source_kind, s.source_ref
             )
@@ -86,7 +111,7 @@ def generate_study_set(self, study_set_id):
                         topic=q.topic,
                         order=i,
                     )
-                    for i, q in enumerate(result.quiz)
+                    for i, q in enumerate(all_quiz)
                 ]
             )
             WordChallenge.objects.bulk_create(
@@ -114,10 +139,11 @@ def generate_study_set(self, study_set_id):
         )
 
         logger.info(
-            "Generated StudySet %s in %.1fs (quiz=%d words=%d)",
+            "Generated StudySet %s in %.1fs (sections=%d quiz=%d words=%d)",
             study_set_id,
             time.monotonic() - started,
-            len(result.quiz),
+            len(result.sections),
+            len(all_quiz),
             len(result.word_game),
         )
 

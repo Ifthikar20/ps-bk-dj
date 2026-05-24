@@ -29,6 +29,8 @@ class StudySet(UUIDModel):
     summary = models.TextField(blank=True, default="")
     key_points = models.JSONField(default=list)
     topics = models.JSONField(default=list)
+    # Sectioned study content: [{title, content, example, quiz:[...]}].
+    sections = models.JSONField(default=list)
     status = models.CharField(
         max_length=12, choices=Status.choices, default=Status.PENDING
     )

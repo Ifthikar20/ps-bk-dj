@@ -37,10 +37,14 @@ class WordItem(BaseModel):
         return cleaned
 
 
+class Section(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    content: str = Field(min_length=1)
+    example: str = ""
+    quiz: List[QuizItem] = Field(default_factory=list)
+
+
 class GenerationResult(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    summary: str = Field(min_length=1)
-    key_points: List[str] = Field(default_factory=list)
-    topics: List[str] = Field(default_factory=list)
-    quiz: List[QuizItem] = Field(min_length=1)
+    sections: List[Section] = Field(min_length=1)
     word_game: List[WordItem] = Field(default_factory=list)

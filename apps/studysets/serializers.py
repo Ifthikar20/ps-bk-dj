@@ -31,6 +31,7 @@ class StudySetSerializer(serializers.ModelSerializer):
             "summary",
             "key_points",
             "topics",
+            "sections",
             "quiz",
             "word_game",
             "status",
