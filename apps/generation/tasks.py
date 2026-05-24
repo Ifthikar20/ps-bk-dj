@@ -44,7 +44,22 @@ def generate_study_set(self, study_set_id):
         if len(text) < 50:
             raise GenerationError("Not enough readable content to generate from.")
 
-        result = run_llm(text)
+        result, usage = run_llm(text)
+
+        # Track token spend for this user (best-effort; never fail generation).
+        try:
+            from .models import TokenUsage
+
+            TokenUsage.objects.create(
+                user=study_set.owner,
+                study_set=study_set,
+                provider=usage.get("provider", ""),
+                model=usage.get("model", ""),
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+            )
+        except Exception:  # usage logging must never break generation
+            logger.warning("Failed to record token usage for %s", study_set_id)
 
         with transaction.atomic():
             s = StudySet.objects.select_for_update().get(id=study_set_id)

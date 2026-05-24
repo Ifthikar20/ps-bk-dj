@@ -93,7 +93,7 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_TASK_ALWAYS_EAGER=True
 
 # --- AI (server-only) — provider: deepseek | local | gemini | anthropic ---
-LLM_PROVIDER=deepseek
+LLM_PROVIDER=anthropic
 LLM_TEMPERATURE=0.4
 LLM_MAX_OUTPUT_TOKENS=2048
 DEEPSEEK_API_KEY=

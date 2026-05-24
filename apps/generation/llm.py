@@ -105,7 +105,7 @@ def _normalize_keys(raw: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Providers — each returns a raw dict parsed from the model's JSON output.
 # --------------------------------------------------------------------------- #
-def _call_openai_compatible(text: str, *, base_url, api_key, model) -> dict:
+def _call_openai_compatible(text: str, *, base_url, api_key, model, provider):
     from openai import OpenAI
 
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=90)
@@ -120,10 +120,18 @@ def _call_openai_compatible(text: str, *, base_url, api_key, model) -> dict:
         max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
         stream=False,
     )
-    return json.loads(completion.choices[0].message.content)
+    raw = json.loads(completion.choices[0].message.content)
+    u = completion.usage
+    usage = {
+        "provider": provider,
+        "model": model,
+        "input_tokens": int(getattr(u, "prompt_tokens", 0) or 0),
+        "output_tokens": int(getattr(u, "completion_tokens", 0) or 0),
+    }
+    return raw, usage
 
 
-def _call_deepseek(text: str) -> dict:
+def _call_deepseek(text: str):
     if not settings.DEEPSEEK_API_KEY:
         raise GenerationError("DeepSeek is not configured.")
     return _call_openai_compatible(
@@ -131,19 +139,21 @@ def _call_deepseek(text: str) -> dict:
         base_url=settings.DEEPSEEK_BASE_URL,
         api_key=settings.DEEPSEEK_API_KEY,
         model=settings.DEEPSEEK_MODEL,
+        provider="deepseek",
     )
 
 
-def _call_local(text: str) -> dict:
+def _call_local(text: str):
     return _call_openai_compatible(
         text,
         base_url=settings.LOCAL_LLM_BASE_URL,
         api_key=settings.LOCAL_LLM_API_KEY,
         model=settings.LOCAL_LLM_MODEL,
+        provider="local",
     )
 
 
-def _call_gemini(text: str) -> dict:
+def _call_gemini(text: str):
     import google.generativeai as genai
 
     if not settings.GEMINI_API_KEY:
@@ -159,7 +169,14 @@ def _call_gemini(text: str) -> dict:
             "max_output_tokens": settings.LLM_MAX_OUTPUT_TOKENS,
         },
     )
-    return json.loads(response.text)
+    meta = getattr(response, "usage_metadata", None)
+    usage = {
+        "provider": "gemini",
+        "model": settings.GEMINI_MODEL,
+        "input_tokens": int(getattr(meta, "prompt_token_count", 0) or 0),
+        "output_tokens": int(getattr(meta, "candidates_token_count", 0) or 0),
+    }
+    return json.loads(response.text), usage
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -172,7 +189,7 @@ def _strip_json_fence(raw: str) -> str:
     return s.strip()
 
 
-def _call_anthropic(text: str) -> dict:
+def _call_anthropic(text: str):
     import anthropic
 
     if not settings.ANTHROPIC_API_KEY:
@@ -186,7 +203,13 @@ def _call_anthropic(text: str) -> dict:
         messages=[{"role": "user", "content": _PROMPT.format(text=text)}],
     )
     raw = next((b.text for b in message.content if b.type == "text"), "")
-    return json.loads(_strip_json_fence(raw))
+    usage = {
+        "provider": "anthropic",
+        "model": settings.ANTHROPIC_MODEL,
+        "input_tokens": int(getattr(message.usage, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(message.usage, "output_tokens", 0) or 0),
+    }
+    return json.loads(_strip_json_fence(raw)), usage
 
 
 _PROVIDERS = {
@@ -198,19 +221,23 @@ _PROVIDERS = {
 
 
 def _provider():
-    provider = (settings.LLM_PROVIDER or "deepseek").lower()
+    provider = (settings.LLM_PROVIDER or "anthropic").lower()
     if provider not in _PROVIDERS:
         raise GenerationError(f"Unknown LLM provider: {provider}")
     return _PROVIDERS[provider], provider
 
 
-def run_llm(text: str) -> GenerationResult:
+def run_llm(text: str) -> tuple[GenerationResult, dict]:
+    """Returns (validated result, token-usage dict).
+
+    usage = {provider, model, input_tokens, output_tokens}.
+    """
     call, name = _provider()
     last_error = None
     for attempt in range(2):  # one re-prompt on malformed output
         try:
-            raw = call(text)
-            return GenerationResult.model_validate(_normalize_keys(raw))
+            raw, usage = call(text)
+            return GenerationResult.model_validate(_normalize_keys(raw)), usage
         except GenerationError:
             raise
         except (json.JSONDecodeError, ValidationError, KeyError, ValueError, TypeError) as exc:
