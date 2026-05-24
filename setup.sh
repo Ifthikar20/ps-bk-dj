@@ -92,7 +92,7 @@ REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_TASK_ALWAYS_EAGER=True
 
-# --- AI (server-only) — provider: deepseek | local | gemini ---
+# --- AI (server-only) — provider: deepseek | local | gemini | anthropic ---
 LLM_PROVIDER=deepseek
 LLM_TEMPERATURE=0.4
 LLM_MAX_OUTPUT_TOKENS=2048
@@ -104,6 +104,8 @@ LOCAL_LLM_API_KEY=not-needed
 LOCAL_LLM_MODEL=llama3.1
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-1.5-flash
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-haiku-4-5
 
 # --- Limits ---
 FREE_GENERATION_LIMIT=2

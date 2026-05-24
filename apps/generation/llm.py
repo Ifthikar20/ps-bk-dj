@@ -1,9 +1,10 @@
 """Pluggable LLM layer: turn source text into a validated GenerationResult.
 
 Provider is selected by ``settings.LLM_PROVIDER``:
-- ``deepseek`` — DeepSeek's OpenAI-compatible API (default)
-- ``local``    — any OpenAI-compatible server (Ollama / vLLM / LM Studio)
-- ``gemini``   — Google Gemini
+- ``deepseek``  — DeepSeek's OpenAI-compatible API (default)
+- ``local``     — any OpenAI-compatible server (Ollama / vLLM / LM Studio)
+- ``gemini``    — Google Gemini
+- ``anthropic`` — Anthropic Claude (e.g. claude-haiku-4-5)
 
 All providers are asked for strict JSON; the output is normalized, validated
 with Pydantic, and re-prompted once on malformed output.
@@ -161,10 +162,38 @@ def _call_gemini(text: str) -> dict:
     return json.loads(response.text)
 
 
+def _strip_json_fence(raw: str) -> str:
+    """Claude is asked for raw JSON, but tolerate an accidental ```json fence."""
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+    return s.strip()
+
+
+def _call_anthropic(text: str) -> dict:
+    import anthropic
+
+    if not settings.ANTHROPIC_API_KEY:
+        raise GenerationError("Anthropic (Claude) is not configured.")
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=90)
+    message = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+        temperature=settings.LLM_TEMPERATURE,
+        system=_SYSTEM,
+        messages=[{"role": "user", "content": _PROMPT.format(text=text)}],
+    )
+    raw = next((b.text for b in message.content if b.type == "text"), "")
+    return json.loads(_strip_json_fence(raw))
+
+
 _PROVIDERS = {
     "deepseek": _call_deepseek,
     "local": _call_local,
     "gemini": _call_gemini,
+    "anthropic": _call_anthropic,
 }
 
 

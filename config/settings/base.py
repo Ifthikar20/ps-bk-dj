@@ -238,6 +238,10 @@ LOCAL_LLM_MODEL = config("LOCAL_LLM_MODEL", default="llama3.1")
 GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-1.5-flash")
 
+# Anthropic (Claude). Haiku is the cheapest/fastest for quiz generation.
+ANTHROPIC_API_KEY = config("ANTHROPIC_API_KEY", default="")
+ANTHROPIC_MODEL = config("ANTHROPIC_MODEL", default="claude-haiku-4-5")
+
 # Free-tier generation limit — MUST equal SubscriptionBloc.freeLimit in the app.
 FREE_GENERATION_LIMIT = config("FREE_GENERATION_LIMIT", default=2, cast=int)
 
