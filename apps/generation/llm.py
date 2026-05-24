@@ -1,7 +1,12 @@
-"""Gemini call that returns a validated GenerationResult.
+"""Pluggable LLM layer: turn source text into a validated GenerationResult.
 
-Uses JSON mode with an explicit response schema so parsing is deterministic;
-re-prompts once if the model returns malformed output.
+Provider is selected by ``settings.LLM_PROVIDER``:
+- ``deepseek`` — DeepSeek's OpenAI-compatible API (default)
+- ``local``    — any OpenAI-compatible server (Ollama / vLLM / LM Studio)
+- ``gemini``   — Google Gemini
+
+All providers are asked for strict JSON; the output is normalized, validated
+with Pydantic, and re-prompted once on malformed output.
 """
 import json
 import logging
@@ -15,7 +20,28 @@ from .schemas import GenerationResult
 
 logger = logging.getLogger(__name__)
 
-_RESPONSE_SCHEMA = {
+_SYSTEM = "You are a study-aid generator. You only output valid JSON."
+
+_PROMPT = """From the SOURCE TEXT below, produce a compact study set as a single \
+JSON object with EXACTLY these keys:
+- "title": a short topic title (<= 60 chars).
+- "summary": a 3-5 sentence overview.
+- "keyPoints": array of 3-7 concise bullet strings.
+- "topics": array of 2-5 short topic labels used to tag quiz questions.
+- "quiz": array of 5-10 objects, each {{"prompt", "choices" (4 strings), \
+"correctIndex" (0-based int), "explanation" (one sentence), "topic" (from topics)}}.
+- "wordGame": array of 3-6 objects, each {{"word" (2-12 A-Z letters, no spaces), \
+"clue" (one sentence)}}.
+Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
+
+SOURCE TEXT:
+\"\"\"
+{text}
+\"\"\"
+"""
+
+# Gemini understands a response schema; OpenAI-compatible servers get json_object.
+_GEMINI_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
@@ -51,25 +77,6 @@ _RESPONSE_SCHEMA = {
     "required": ["title", "summary", "quiz"],
 }
 
-_PROMPT = """You are a study-aid generator. From the SOURCE TEXT below, produce \
-a compact study set as JSON. Requirements:
-- title: a short topic title (<= 60 chars).
-- summary: 3-5 sentence overview.
-- keyPoints: 3-7 concise bullet strings.
-- topics: 2-5 short topic labels used to tag quiz questions.
-- quiz: 5-10 multiple-choice questions. Each has prompt, 4 choices, a \
-correctIndex (0-based), a one-sentence explanation, and a topic from the \
-topics list.
-- wordGame: 3-6 single-word, hangman-style entries. word is 2-12 A-Z letters \
-(no spaces); clue is one sentence.
-Only use facts grounded in the SOURCE TEXT.
-
-SOURCE TEXT:
-\"\"\"
-{text}
-\"\"\"
-"""
-
 
 def _normalize_keys(raw: dict) -> dict:
     """Map camelCase LLM keys to the snake_case our pydantic schema expects."""
@@ -94,31 +101,95 @@ def _normalize_keys(raw: dict) -> dict:
     }
 
 
-def _call_model(text: str) -> dict:
+# --------------------------------------------------------------------------- #
+# Providers — each returns a raw dict parsed from the model's JSON output.
+# --------------------------------------------------------------------------- #
+def _call_openai_compatible(text: str, *, base_url, api_key, model) -> dict:
+    from openai import OpenAI
+
+    client = OpenAI(base_url=base_url, api_key=api_key, timeout=90)
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _PROMPT.format(text=text)},
+        ],
+        response_format={"type": "json_object"},
+        temperature=settings.LLM_TEMPERATURE,
+        max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+        stream=False,
+    )
+    return json.loads(completion.choices[0].message.content)
+
+
+def _call_deepseek(text: str) -> dict:
+    if not settings.DEEPSEEK_API_KEY:
+        raise GenerationError("DeepSeek is not configured.")
+    return _call_openai_compatible(
+        text,
+        base_url=settings.DEEPSEEK_BASE_URL,
+        api_key=settings.DEEPSEEK_API_KEY,
+        model=settings.DEEPSEEK_MODEL,
+    )
+
+
+def _call_local(text: str) -> dict:
+    return _call_openai_compatible(
+        text,
+        base_url=settings.LOCAL_LLM_BASE_URL,
+        api_key=settings.LOCAL_LLM_API_KEY,
+        model=settings.LOCAL_LLM_MODEL,
+    )
+
+
+def _call_gemini(text: str) -> dict:
     import google.generativeai as genai
 
     if not settings.GEMINI_API_KEY:
-        raise GenerationError("AI generation is not configured.")
+        raise GenerationError("Gemini is not configured.")
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(settings.GEMINI_MODEL)
     response = model.generate_content(
         _PROMPT.format(text=text),
         generation_config={
             "response_mime_type": "application/json",
-            "response_schema": _RESPONSE_SCHEMA,
-            "temperature": 0.4,
+            "response_schema": _GEMINI_SCHEMA,
+            "temperature": settings.LLM_TEMPERATURE,
+            "max_output_tokens": settings.LLM_MAX_OUTPUT_TOKENS,
         },
     )
     return json.loads(response.text)
 
 
-def run_gemini(text: str) -> GenerationResult:
+_PROVIDERS = {
+    "deepseek": _call_deepseek,
+    "local": _call_local,
+    "gemini": _call_gemini,
+}
+
+
+def _provider():
+    provider = (settings.LLM_PROVIDER or "deepseek").lower()
+    if provider not in _PROVIDERS:
+        raise GenerationError(f"Unknown LLM provider: {provider}")
+    return _PROVIDERS[provider], provider
+
+
+def run_llm(text: str) -> GenerationResult:
+    call, name = _provider()
     last_error = None
     for attempt in range(2):  # one re-prompt on malformed output
         try:
-            raw = _call_model(text)
+            raw = call(text)
             return GenerationResult.model_validate(_normalize_keys(raw))
-        except (json.JSONDecodeError, ValidationError, KeyError, ValueError) as exc:
+        except GenerationError:
+            raise
+        except (json.JSONDecodeError, ValidationError, KeyError, ValueError, TypeError) as exc:
             last_error = exc
-            logger.warning("Gemini output invalid (attempt %s): %s", attempt + 1, exc)
+            logger.warning(
+                "LLM(%s) output invalid (attempt %s): %s", name, attempt + 1, exc
+            )
+        except Exception as exc:  # network / provider errors
+            last_error = exc
+            logger.warning("LLM(%s) call failed (attempt %s): %s", name, attempt + 1, exc)
     raise GenerationError(f"AI returned malformed content: {last_error}")

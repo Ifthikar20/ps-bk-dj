@@ -58,6 +58,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "django.middleware.gzip.GZipMiddleware",  # compress JSON responses
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -214,7 +215,24 @@ if AWS_STORAGE_BUCKET_NAME:
 # --------------------------------------------------------------------------- #
 # Domain config
 # --------------------------------------------------------------------------- #
-# AI key lives only here, never in the app.
+# --- LLM provider (pluggable) ---
+# AI keys live only here, never in the app.
+# Options: "deepseek" | "local" | "gemini"
+LLM_PROVIDER = config("LLM_PROVIDER", default="deepseek")
+LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=4096, cast=int)
+LLM_TEMPERATURE = config("LLM_TEMPERATURE", default=0.4, cast=float)
+
+# DeepSeek (OpenAI-compatible API).
+DEEPSEEK_API_KEY = config("DEEPSEEK_API_KEY", default="")
+DEEPSEEK_BASE_URL = config("DEEPSEEK_BASE_URL", default="https://api.deepseek.com")
+DEEPSEEK_MODEL = config("DEEPSEEK_MODEL", default="deepseek-chat")
+
+# Local model (OpenAI-compatible: Ollama / vLLM / LM Studio).
+LOCAL_LLM_BASE_URL = config("LOCAL_LLM_BASE_URL", default="http://localhost:11434/v1")
+LOCAL_LLM_API_KEY = config("LOCAL_LLM_API_KEY", default="not-needed")
+LOCAL_LLM_MODEL = config("LOCAL_LLM_MODEL", default="llama3.1")
+
+# Gemini.
 GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-1.5-flash")
 

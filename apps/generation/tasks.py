@@ -10,7 +10,7 @@ from apps.studysets.models import QuizQuestion, StudySet, WordChallenge
 from apps.subscriptions.models import Subscription
 
 from .extraction import extract_text
-from .llm import run_gemini
+from .llm import run_llm
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def generate_study_set(self, study_set_id):
         if len(text) < 50:
             raise GenerationError("Not enough readable content to generate from.")
 
-        result = run_gemini(text)
+        result = run_llm(text)
 
         with transaction.atomic():
             s = StudySet.objects.select_for_update().get(id=study_set_id)
