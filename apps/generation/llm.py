@@ -195,13 +195,24 @@ def _call_anthropic(text: str):
     if not settings.ANTHROPIC_API_KEY:
         raise GenerationError("Anthropic (Claude) is not configured.")
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=90)
-    message = client.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
-        temperature=settings.LLM_TEMPERATURE,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": _PROMPT.format(text=text)}],
-    )
+    try:
+        message = client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            temperature=settings.LLM_TEMPERATURE,
+            system=_SYSTEM,
+            messages=[{"role": "user", "content": _PROMPT.format(text=text)}],
+        )
+    except anthropic.AuthenticationError as exc:
+        raise GenerationError(
+            "Anthropic rejected the API key (401). Check ANTHROPIC_API_KEY in "
+            "the backend .env — no spaces/comments, and a current active key."
+        ) from exc
+    except anthropic.PermissionDeniedError as exc:
+        raise GenerationError(
+            "Anthropic denied access (403). Check the key's workspace and that "
+            "the model is enabled for your organization."
+        ) from exc
     raw = next((b.text for b in message.content if b.type == "text"), "")
     usage = {
         "provider": "anthropic",
