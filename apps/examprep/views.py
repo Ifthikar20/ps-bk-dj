@@ -35,13 +35,8 @@ class ExamPlanViewSet(viewsets.ModelViewSet):
             },
         )
 
-        from apps.rewards.services import award
-
-        award(
-            request.user,
-            reason="Daily exam session",
-            context={"correct": data["correct"], "total": data["total"]},
-        )
+        # The "Daily exam session" reward is posted by the client via
+        # /rewards/activity, keeping all reward writes on one path.
 
         plan.refresh_from_db()
         return Response(ExamPlanSerializer(plan, context={"request": request}).data)

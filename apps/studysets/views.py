@@ -10,7 +10,6 @@ from apps.subscriptions.services import assert_can_generate
 from .models import StudySet
 from .serializers import (
     StudySetCreateSerializer,
-    StudySetListSerializer,
     StudySetSerializer,
     StudySetStatusSerializer,
 )
@@ -25,17 +24,12 @@ class StudySetViewSet(
     permission_classes = [IsOwner]
     serializer_class = StudySetSerializer
 
-    def get_serializer_class(self):
-        if self.action == "list":
-            return StudySetListSerializer
-        return StudySetSerializer
-
     def get_queryset(self):
         # Object-level isolation: a user only ever sees their own sets.
-        qs = StudySet.objects.filter(owner=self.request.user)
-        if self.action == "list":
-            return qs  # list is lightweight — no quiz/word-game join needed
-        return qs.prefetch_related("quiz", "word_game")
+        # prefetch keeps the library list O(1) queries (no N+1 on quiz/words).
+        return StudySet.objects.filter(owner=self.request.user).prefetch_related(
+            "quiz", "word_game"
+        )
 
     def get_throttles(self):
         if self.action == "create":

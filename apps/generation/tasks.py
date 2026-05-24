@@ -88,10 +88,8 @@ def generate_study_set(self, study_set_id):
                 usage_count=F("usage_count") + 1
             )
 
-        # Award points for creating a study set (server-authoritative).
-        from apps.rewards.services import award
-
-        award(study_set.owner, reason="Created a study set")
+        # Reward points are awarded by the client via POST /rewards/activity
+        # ("Created a study set"), keeping all reward writes on one path.
 
         logger.info(
             "Generated StudySet %s in %.1fs (quiz=%d words=%d)",

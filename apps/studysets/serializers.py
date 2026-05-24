@@ -38,26 +38,6 @@ class StudySetSerializer(serializers.ModelSerializer):
         )
 
 
-class StudySetListSerializer(serializers.ModelSerializer):
-    """Lightweight library row — omits the heavy quiz/word-game arrays.
-
-    The client lazy-loads those via the detail endpoint when a set is opened.
-    """
-
-    class Meta:
-        model = StudySet
-        fields = (
-            "id",
-            "title",
-            "source_kind",
-            "source_ref",
-            "summary",
-            "topics",
-            "status",
-            "created_at",
-        )
-
-
 class StudySetStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudySet
