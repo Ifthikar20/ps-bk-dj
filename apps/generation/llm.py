@@ -95,33 +95,60 @@ _GEMINI_SCHEMA = {
 }
 
 
+def _clean_quiz(items, topic):
+    """Keep only well-formed quiz items; clamp a bad correctIndex rather than
+    failing the whole generation."""
+    out = []
+    for q in items or []:
+        prompt = (q.get("prompt") or "").strip()
+        choices = [str(c).strip() for c in (q.get("choices") or []) if c and str(c).strip()]
+        if not prompt or len(choices) < 2:
+            continue
+        try:
+            ci = int(q.get("correctIndex", q.get("correct_index", 0)) or 0)
+        except (TypeError, ValueError):
+            ci = 0
+        if ci < 0 or ci >= len(choices):
+            ci = 0
+        out.append({
+            "prompt": prompt,
+            "choices": choices,
+            "correct_index": ci,
+            "explanation": q.get("explanation", "") or "",
+            "topic": topic,
+        })
+    return out
+
+
+def _clean_words(items):
+    """Drop word-game entries that can't be a 2-12 letter A-Z puzzle word, so a
+    single over-long word (e.g. ANTICONVULSANT) doesn't fail the whole set."""
+    out = []
+    for w in items or []:
+        word = "".join(ch for ch in str(w.get("word", "")).upper() if ch.isalpha())
+        clue = (w.get("clue") or "").strip()
+        if 2 <= len(word) <= 12 and clue:
+            out.append({"word": word, "clue": clue})
+    return out
+
+
 def _normalize_keys(raw: dict) -> dict:
-    """Map the LLM's camelCase section JSON to our snake_case pydantic schema."""
+    """Map the LLM's camelCase section JSON to our snake_case pydantic schema,
+    pre-cleaning so a few malformed items never discard a good study set."""
     sections = []
     for s in raw.get("sections", []) or []:
-        quiz = []
-        for q in s.get("quiz", []) or []:
-            quiz.append(
-                {
-                    "prompt": q.get("prompt", ""),
-                    "choices": q.get("choices", []),
-                    "correct_index": q.get("correctIndex", q.get("correct_index", 0)),
-                    "explanation": q.get("explanation", "") or "",
-                    "topic": s.get("title", "General") or "General",
-                }
-            )
         sections.append(
             {
                 "title": s.get("title", "") or "Section",
                 "content": s.get("content", "") or "",
                 "example": s.get("example", "") or "",
-                "quiz": quiz,
+                "quiz": _clean_quiz(s.get("quiz", []), s.get("title", "General") or "General"),
             }
         )
     return {
         "title": raw.get("title", "") or "Study set",
         "sections": sections,
-        "word_game": raw.get("wordGame", raw.get("word_game", [])) or [],
+        "word_game": _clean_words(raw.get("wordGame", raw.get("word_game", []))),
     }
 
 
