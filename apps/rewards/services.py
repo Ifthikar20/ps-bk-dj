@@ -119,3 +119,33 @@ def award(user, reason: str, context: dict | None = None, dedupe_key: str | None
 
 def get_rewards_state(user) -> RewardProfile:
     return RewardProfile.objects.get_or_create(user=user)[0]
+
+
+def points_history(user, days: int = 14) -> list[dict]:
+    """Per-day points + activity count for the last `days` days, in the user's
+    timezone. Drives the activity chart / streak heatmap.
+    """
+    days = max(7, min(90, int(days)))
+    tz = ZoneInfo(getattr(user, "timezone", "UTC") or "UTC")
+    today = datetime.now(tz).date()
+    start = today - timedelta(days=days - 1)
+
+    buckets = {
+        (start + timedelta(days=i)).isoformat(): {"points": 0, "count": 0}
+        for i in range(days)
+    }
+
+    start_utc = datetime(start.year, start.month, start.day, tzinfo=tz)
+    events = PointEvent.objects.filter(user=user, created_at__gte=start_utc).only(
+        "points", "created_at"
+    )
+    for event in events:
+        ymd = event.created_at.astimezone(tz).date().isoformat()
+        if ymd in buckets:
+            buckets[ymd]["points"] += event.points
+            buckets[ymd]["count"] += 1
+
+    return [
+        {"ymd": ymd, "points": b["points"], "count": b["count"]}
+        for ymd, b in sorted(buckets.items())
+    ]

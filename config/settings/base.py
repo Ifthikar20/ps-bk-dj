@@ -220,7 +220,8 @@ if AWS_STORAGE_BUCKET_NAME:
 # AI keys live only here, never in the app.
 # Options: "deepseek" | "local" | "gemini"
 LLM_PROVIDER = config("LLM_PROVIDER", default="deepseek")
-LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=4096, cast=int)
+# deepseek-chat is a low-cost model; cap output tokens to keep Q&A generation cheap.
+LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=2048, cast=int)
 LLM_TEMPERATURE = config("LLM_TEMPERATURE", default=0.4, cast=float)
 
 # DeepSeek (OpenAI-compatible API).

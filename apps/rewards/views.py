@@ -5,7 +5,12 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from .serializers import RewardProfileSerializer
-from .services import CLIENT_REPORTABLE_REASONS, award, get_rewards_state
+from .services import (
+    CLIENT_REPORTABLE_REASONS,
+    award,
+    get_rewards_state,
+    points_history,
+)
 
 
 class RewardsActivityThrottle(UserRateThrottle):
@@ -23,6 +28,19 @@ class RewardsView(APIView):
     def get(self, request):
         profile = get_rewards_state(request.user)
         return Response(RewardProfileSerializer(profile).data)
+
+
+class RewardsHistoryView(APIView):
+    """Per-day points + activity for the last N days (default 14)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            days = int(request.query_params.get("days", 14))
+        except (TypeError, ValueError):
+            days = 14
+        return Response({"results": points_history(request.user, days=days)})
 
 
 class ActivityView(APIView):
