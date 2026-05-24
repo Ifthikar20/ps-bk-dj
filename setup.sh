@@ -85,7 +85,9 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 LOG_LEVEL=INFO
 
 # --- Database / Redis ---
-DATABASE_URL=postgres://playstudy:playstudy@localhost:5432/playstudy
+# sqlite by default so dev runs with no DB server. For Postgres, set e.g.
+# DATABASE_URL=postgres://playstudy:playstudy@localhost:5432/playstudy
+DATABASE_URL=sqlite:///db.sqlite3
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_TASK_ALWAYS_EAGER=True
