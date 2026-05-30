@@ -100,6 +100,17 @@ DATABASES = {
     )
 }
 
+# SQLite serializes writes via a file lock; with the background generation
+# thread + heartbeats every 15s + rewards writes it is easy to hit
+# "database is locked". WAL lets readers and writers proceed concurrently
+# and `timeout` makes writers wait up to 30s for the lock instead of erroring.
+if DATABASES["default"].get("ENGINE", "").endswith("sqlite3"):
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"]["timeout"] = 30
+    DATABASES["default"]["OPTIONS"]["init_command"] = (
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"
+    )
+
 # --------------------------------------------------------------------------- #
 # Cache / Celery / Redis
 # --------------------------------------------------------------------------- #
