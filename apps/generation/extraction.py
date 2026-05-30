@@ -182,17 +182,24 @@ def _youtube_text(video_id: str) -> str:
                 "a.en", "en-orig",
             ],
             "subtitlesformat": "vtt/srv3/json3/best",
+            # yt-dlp's default format selector ("bv*+ba/b") can fail
+            # validation on videos lacking a merged format, raising
+            # "Requested format is not available" even with
+            # skip_download=True. Pin to a single-file format that
+            # YouTube always offers so the metadata path completes.
+            "format": "best/bestaudio/worst",
+            "allow_unplayable_formats": True,
+            "ignore_no_formats_error": True,
             "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": FETCH_TIMEOUT,
             "retries": 2,
         }
+        info = None
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                # download=True is what triggers the subtitle file write;
-                # the actual video is still skipped via skip_download=True.
-                ydl.extract_info(url, download=True)
+                info = ydl.extract_info(url, download=True)
         except yt_dlp.utils.DownloadError as exc:
             msg = str(exc).lower()
             if "private" in msg or "unavailable" in msg or "removed" in msg:
@@ -211,6 +218,17 @@ def _youtube_text(video_id: str) -> str:
                 "Couldn't read that YouTube video. Try a different link."
             ) from exc
 
+        # Verbose diagnostics: what tracks did the video actually advertise?
+        if info is not None:
+            sub_langs = sorted((info.get("subtitles") or {}).keys())
+            auto_langs = sorted((info.get("automatic_captions") or {}).keys())
+            logger.info(
+                "YouTube %s captions advertised: manual=%s auto=%s",
+                video_id, sub_langs[:12], auto_langs[:12],
+            )
+        on_disk = sorted(os.listdir(tmpdir))
+        logger.info("YouTube %s tmpdir files: %s", video_id, on_disk)
+
         # Discover the file yt-dlp actually wrote. Prefer .vtt, then srv*,
         # then json3, then anything.
         path = _pick_caption_file(tmpdir, video_id)
@@ -219,6 +237,8 @@ def _youtube_text(video_id: str) -> str:
                 "This YouTube video has no English captions. "
                 "Try a different video that has subtitles enabled."
             )
+        logger.info("YouTube %s using caption file %s",
+                    video_id, os.path.basename(path))
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 body = f.read()
@@ -230,6 +250,7 @@ def _youtube_text(video_id: str) -> str:
             ) from exc
 
     text = _captions_to_text(body)
+    logger.info("YouTube %s parsed transcript: %s chars", video_id, len(text))
     if not text.strip():
         raise GenerationError("This YouTube video's captions are empty.")
     return text
