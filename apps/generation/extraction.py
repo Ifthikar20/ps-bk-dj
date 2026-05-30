@@ -2,11 +2,13 @@
 import io
 import ipaddress
 import logging
+import re
 import socket
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
+from django.conf import settings
 from django.core.files.storage import default_storage
 
 from apps.common.exceptions import GenerationError
@@ -16,6 +18,17 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_CHARS = 60_000  # keep prompts (and cost) bounded
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # cap remote fetches
 FETCH_TIMEOUT = 10  # seconds
+
+# Fixed allow-list of YouTube hostnames. Anything else gets the regular
+# SSRF guard + download path so we never bypass safety on look-alike hosts.
+_YT_HOSTS = frozenset({
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+})
+_YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 # Content-types we can read as documents (anything else is treated as HTML).
 _DOC_CONTENT_TYPES = {
@@ -84,7 +97,150 @@ def _download(url: str) -> tuple[bytes, str]:
     return bytes(chunks), content_type
 
 
+def _youtube_id(url: str) -> str | None:
+    """Return the 11-char video id if [url] points at YouTube, else None.
+
+    Only accepts hostnames in the fixed allow-list above so a malicious
+    look-alike (e.g. youtube.com.attacker.tld) can never reach the YouTube
+    path — those flow through the regular SSRF-guarded download instead.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    host = parts.hostname.lower()
+    if host not in _YT_HOSTS:
+        return None
+    if host == "youtu.be":
+        candidate = parts.path.lstrip("/").split("/", 1)[0]
+    else:
+        # /watch?v=ID, /shorts/ID, /embed/ID, /v/ID
+        path = parts.path or ""
+        candidate = None
+        for prefix in ("/shorts/", "/embed/", "/v/", "/live/"):
+            if path.startswith(prefix):
+                candidate = path[len(prefix):].split("/", 1)[0]
+                break
+        if candidate is None:
+            qs = parse_qs(parts.query or "")
+            candidate = (qs.get("v") or [None])[0]
+    return candidate if candidate and _YT_ID_RE.match(candidate) else None
+
+
+def _youtube_title(video_id: str) -> str | None:
+    """Resolve a friendly title via YouTube's public oEmbed endpoint.
+
+    Best-effort: returns None on any failure (the caller falls back to a
+    title derived by the LLM from the transcript).
+    """
+    try:
+        resp = requests.get(
+            "https://www.youtube.com/oembed",
+            params={
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "format": "json",
+            },
+            timeout=FETCH_TIMEOUT,
+            headers={"User-Agent": "PlayStudyBot/1.0"},
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        title = (data.get("title") or "").strip()
+        return title[:200] if title else None
+    except Exception as exc:  # network / json / etc — title is optional
+        logger.info("YouTube oembed title lookup failed for %s: %s", video_id, exc)
+        return None
+
+
+def _youtube_text(video_id: str) -> str:
+    """Fetch the transcript for [video_id], joining segments to plain text.
+
+    Prefers manually-created English captions, then auto-generated English,
+    then any available transcript translated to English. Raises
+    GenerationError with a user-friendly message if nothing is available.
+    """
+    try:
+        from youtube_transcript_api import (
+            YouTubeTranscriptApi,
+            NoTranscriptFound,
+            TranscriptsDisabled,
+            VideoUnavailable,
+        )
+    except ImportError as exc:  # dep not installed yet
+        raise GenerationError(
+            "YouTube ingest is not configured on this server."
+        ) from exc
+
+    try:
+        listing = YouTubeTranscriptApi.list_transcripts(video_id)
+    except TranscriptsDisabled as exc:
+        raise GenerationError(
+            "This YouTube video has captions disabled. Try a different video."
+        ) from exc
+    except VideoUnavailable as exc:
+        raise GenerationError(
+            "That YouTube video is unavailable (it may be private or deleted)."
+        ) from exc
+    except Exception as exc:
+        logger.warning("YouTube transcript listing failed for %s: %s", video_id, exc)
+        raise GenerationError(
+            "Couldn't read that YouTube video. Try a different link."
+        ) from exc
+
+    transcript = None
+    try:
+        transcript = listing.find_manually_created_transcript(["en"])
+    except NoTranscriptFound:
+        pass
+    if transcript is None:
+        try:
+            transcript = listing.find_transcript(["en"])
+        except NoTranscriptFound:
+            pass
+    if transcript is None:
+        try:
+            any_t = next(iter(listing))
+            transcript = any_t.translate("en") if any_t.is_translatable else any_t
+        except StopIteration as exc:
+            raise GenerationError(
+                "This YouTube video has no captions available."
+            ) from exc
+        except Exception as exc:
+            logger.warning(
+                "YouTube translate failed for %s: %s", video_id, exc
+            )
+            raise GenerationError(
+                "Couldn't fetch a usable transcript for that YouTube video."
+            ) from exc
+
+    try:
+        segments = transcript.fetch()
+    except Exception as exc:
+        logger.warning("YouTube transcript fetch failed for %s: %s", video_id, exc)
+        raise GenerationError(
+            "Couldn't load the captions for that YouTube video."
+        ) from exc
+
+    parts = []
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if text and text not in ("[Music]", "[Applause]"):
+            parts.append(text)
+    if not parts:
+        raise GenerationError(
+            "This YouTube video's captions are empty."
+        )
+    return " ".join(parts)
+
+
 def extract_from_link(url: str) -> str:
+    # YouTube path runs before the SSRF guard / download, because the public
+    # YouTube API does the network for us. We still re-validate the host
+    # against a fixed allow-list inside _youtube_id().
+    if getattr(settings, "ENABLE_YOUTUBE_INGEST", True):
+        if (video_id := _youtube_id(url)):
+            return _truncate(_youtube_text(video_id))
+
     _assert_public_url(url)
     blob, content_type = _download(url)
 

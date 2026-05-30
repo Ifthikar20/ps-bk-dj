@@ -257,6 +257,14 @@ ANTHROPIC_MODEL = config("ANTHROPIC_MODEL", default="claude-haiku-4-5")
 # Free-tier generation limit — MUST equal SubscriptionBloc.freeLimit in the app.
 FREE_GENERATION_LIMIT = config("FREE_GENERATION_LIMIT", default=2, cast=int)
 
+# YouTube transcript ingest. When True, link URLs whose hostname is in the
+# fixed YouTube allow-list are read via youtube-transcript-api instead of
+# the standard SSRF-guarded download. Set to False to disable instantly if
+# YouTube's transcript endpoint changes or starts blocking us.
+ENABLE_YOUTUBE_INGEST = config(
+    "ENABLE_YOUTUBE_INGEST", default=True, cast=bool
+)
+
 # Upload guards
 MAX_UPLOAD_BYTES = config("MAX_UPLOAD_BYTES", default=20 * 1024 * 1024, cast=int)
 ALLOWED_UPLOAD_EXTENSIONS = [

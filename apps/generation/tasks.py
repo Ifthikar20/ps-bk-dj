@@ -9,7 +9,7 @@ from apps.common.exceptions import GenerationError
 from apps.studysets.models import QuizQuestion, StudySet, WordChallenge
 from apps.subscriptions.models import Subscription
 
-from .extraction import extract_text
+from .extraction import _youtube_id, _youtube_title, extract_text
 from .llm import generate
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 def _derive_title(source_kind, source_ref):
     if source_kind == "link":
+        # YouTube videos get their real title from oEmbed when possible.
+        if (vid := _youtube_id(source_ref)) is not None:
+            yt_title = _youtube_title(vid)
+            if yt_title:
+                return yt_title
         return source_ref.split("//", 1)[-1].split("/", 1)[0][:120] or "Study set"
     if source_kind == "text":
         return "Pasted notes"
