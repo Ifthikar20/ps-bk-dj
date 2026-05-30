@@ -420,3 +420,78 @@ def generate(text: str) -> tuple[GenerationResult, dict]:
         title=title or "Study set", sections=sections, word_game=deduped
     )
     return merged, usage
+
+
+_EXTRA_QUIZ_PROMPT = """You already wrote some quiz questions for a study set. \
+The learner has now finished them and wants MORE. Write {n} NEW quiz items \
+about the same SOURCE TEXT below, MIXED in difficulty (easy / medium / hard), \
+with at least 2 hard "challenge" items that ask the learner to APPLY a rule \
+or principle. The new prompts MUST NOT repeat (or be paraphrases of) any \
+prompt in the EXISTING list below.
+
+Output a single JSON object with exactly one key "quiz" whose value is an array \
+of {n} items, each {{"prompt", "choices" (4 plausible strings), \
+"correctIndex" (0-based int), "explanation" (one sentence), "difficulty" \
+(one of "easy" | "medium" | "hard")}}.
+Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose.
+
+EXISTING (do not repeat these prompts):
+{exclude}
+
+SOURCE TEXT:
+\"\"\"
+{text}
+\"\"\"
+"""
+
+
+def generate_extra_quiz(
+    source_text: str, exclude_prompts: list, n: int = 10, topic: str = "More"
+) -> list:
+    """Ask the LLM for [n] additional quiz items distinct from
+    [exclude_prompts]. Returns a list of normalized quiz dicts ready to
+    persist via QuizQuestion.objects.create. Raises GenerationError on
+    failure.
+    """
+    if not source_text or not source_text.strip():
+        raise GenerationError("This study set has no readable content to draw from.")
+    excl_lines = "\n".join(f"- {p[:200]}" for p in (exclude_prompts or [])[:80])
+    user = _EXTRA_QUIZ_PROMPT.format(
+        text=source_text[:18_000],
+        exclude=excl_lines or "(none)",
+        n=max(3, min(int(n), 20)),
+    )
+
+    import anthropic
+
+    if not settings.ANTHROPIC_API_KEY:
+        raise GenerationError("Anthropic (Claude) is not configured.")
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=90)
+    try:
+        message = client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+            temperature=settings.LLM_TEMPERATURE,
+            system=_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.AuthenticationError as exc:
+        raise GenerationError("Anthropic rejected the API key.") from exc
+    raw = next((b.text for b in message.content if b.type == "text"), "")
+    cleaned = _strip_json_fence(raw)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        logger.warning("Extra-quiz JSON parse failed: %s", exc)
+        raise GenerationError("AI returned malformed extra-quiz content.") from exc
+    items = data.get("quiz") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        raise GenerationError("AI did not return any new quiz items.")
+    cleaned_items = _clean_quiz(items, topic)
+    # Drop any items whose prompt collides with the exclude list (case
+    # insensitive, trimmed) as a final safety net.
+    excl_lower = {p.strip().lower() for p in (exclude_prompts or [])}
+    out = [q for q in cleaned_items if q["prompt"].strip().lower() not in excl_lower]
+    if not out:
+        raise GenerationError("AI couldn't produce questions that aren't repeats.")
+    return out

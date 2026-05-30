@@ -3,12 +3,14 @@ from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.common.exceptions import GenerationError
 from apps.common.permissions import IsOwner
 from apps.common.throttles import GenerationThrottle
 from apps.subscriptions.services import assert_can_generate
 
-from .models import StudySet
+from .models import QuizQuestion, StudySet
 from .serializers import (
+    QuizQuestionSerializer,
     StudySetCreateSerializer,
     StudySetSerializer,
     StudySetStatusSerializer,
@@ -77,6 +79,68 @@ class StudySetViewSet(
     def status(self, request, pk=None):
         study_set = self.get_object()
         return Response(StudySetStatusSerializer(study_set).data)
+
+    @action(detail=True, methods=["post"], url_path="quiz-pack")
+    def quiz_pack(self, request, pk=None):
+        """Generate and persist a fresh batch of quiz items distinct from
+        the ones already on this study set. Body: {"count": int (default 10)}.
+        Returns the newly created QuizQuestion rows.
+        """
+        from apps.generation.llm import generate_extra_quiz
+
+        study_set = self.get_object()
+        try:
+            count = int(request.data.get("count", 10) or 10)
+        except (TypeError, ValueError):
+            count = 10
+        count = max(3, min(count, 20))
+
+        # Build the source text from whatever fuller content we have on disk.
+        sections = study_set.sections or []
+        chunks = []
+        for sec in sections:
+            content = (sec.get("content") or "").strip()
+            if content:
+                chunks.append(f"## {sec.get('title') or ''}\n{content}")
+        source_text = "\n\n".join(chunks) or (study_set.summary or "")
+        if not source_text.strip():
+            return Response(
+                {"detail": "This study set has no readable content to draw from."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing_prompts = list(study_set.quiz.values_list("prompt", flat=True))
+        try:
+            new_items = generate_extra_quiz(
+                source_text=source_text,
+                exclude_prompts=existing_prompts,
+                n=count,
+                topic="Fresh",
+            )
+        except GenerationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        next_order = (study_set.quiz.count() or 0)
+        created = []
+        with transaction.atomic():
+            for i, q in enumerate(new_items):
+                created.append(
+                    QuizQuestion.objects.create(
+                        study_set=study_set,
+                        prompt=q["prompt"],
+                        choices=q["choices"],
+                        correct_index=q["correct_index"],
+                        explanation=q.get("explanation", ""),
+                        topic=q.get("topic", "Fresh"),
+                        difficulty=q.get("difficulty", "medium"),
+                        order=next_order + i,
+                    )
+                )
+
+        return Response(
+            QuizQuestionSerializer(created, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 def _enqueue(study_set_id):
