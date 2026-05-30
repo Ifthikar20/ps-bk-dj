@@ -64,6 +64,7 @@ def generate_study_set(self, study_set_id):
                         "correctIndex": q.correct_index,
                         "explanation": q.explanation,
                         "topic": q.topic,
+                        "difficulty": q.difficulty,
                     }
                     for q in sec.quiz
                 ],
@@ -114,6 +115,7 @@ def generate_study_set(self, study_set_id):
                         correct_index=q.correct_index,
                         explanation=q.explanation,
                         topic=q.topic,
+                        difficulty=q.difficulty,
                         order=i,
                     )
                     for i, q in enumerate(all_quiz)

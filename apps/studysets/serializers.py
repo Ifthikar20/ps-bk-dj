@@ -6,7 +6,15 @@ from .models import QuizQuestion, StudySet, WordChallenge
 class QuizQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuizQuestion
-        fields = ("id", "prompt", "choices", "correct_index", "explanation", "topic")
+        fields = (
+            "id",
+            "prompt",
+            "choices",
+            "correct_index",
+            "explanation",
+            "topic",
+            "difficulty",
+        )
 
 
 class WordChallengeSerializer(serializers.ModelSerializer):

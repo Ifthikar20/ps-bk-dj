@@ -60,6 +60,11 @@ class StudySet(UUIDModel):
 
 
 class QuizQuestion(UUIDModel):
+    class Difficulty(models.TextChoices):
+        EASY = "easy", "Easy"
+        MEDIUM = "medium", "Medium"
+        HARD = "hard", "Hard"
+
     study_set = models.ForeignKey(
         StudySet, on_delete=models.CASCADE, related_name="quiz"
     )
@@ -68,6 +73,9 @@ class QuizQuestion(UUIDModel):
     correct_index = models.PositiveSmallIntegerField()
     explanation = models.TextField(null=True, blank=True)
     topic = models.CharField(max_length=120, default="General")
+    difficulty = models.CharField(
+        max_length=8, choices=Difficulty.choices, default=Difficulty.MEDIUM
+    )
     order = models.PositiveIntegerField(default=0)
 
     class Meta:

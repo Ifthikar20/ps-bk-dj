@@ -10,6 +10,13 @@ class QuizItem(BaseModel):
     correct_index: int = Field(ge=0)
     explanation: str = ""
     topic: str = "General"
+    difficulty: str = "medium"
+
+    @field_validator("difficulty")
+    @classmethod
+    def _check_difficulty(cls, v):
+        v = (v or "medium").lower().strip()
+        return v if v in ("easy", "medium", "hard") else "medium"
 
     @field_validator("choices")
     @classmethod

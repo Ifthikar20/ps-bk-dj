@@ -35,9 +35,18 @@ Return a single JSON object with EXACTLY these keys:
 details of this part of the source (readable chunks, NOT a one-line summary).
    - "example": one concrete, real-world example that makes the section \
 relatable to everyday life.
-   - "quiz": questions about THIS section only, scaled to its complexity — a \
-simple section gets 2, a dense/complex one up to 6. Each: {{"prompt", "choices" \
-(4 strings), "correctIndex" (0-based int), "explanation" (one sentence)}}.
+   - "quiz": MIX of difficulties for THIS section only — scaled to its \
+complexity. A simple section: 3 items (2 easy + 1 medium). A dense section: \
+4-6 items (1 easy + 2-3 medium + 1-2 hard). If the section involves a \
+specific rule, law, theory, formula, framework or named principle, INCLUDE at \
+least one "hard" challenge question that asks the learner to APPLY the rule \
+to a new scenario (not just recall it). Each: {{"prompt", "choices" (4 \
+strings, plausible distractors not obvious throwaways), "correctIndex" \
+(0-based int), "explanation" (one sentence WHY the correct answer is right), \
+"difficulty" (one of "easy" | "medium" | "hard")}}. \
+Easy = direct recall of a fact stated in the section. Medium = a comparison or \
+why/how question. Hard = apply a rule, theory or principle to a new example, \
+or pick the best inference among close options.
 - "wordGame": array of 3-6 objects, each {{"word" (2-12 A-Z letters, no spaces), \
 "clue" (one sentence)}}.
 Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
@@ -58,6 +67,10 @@ _QUIZ_SCHEMA = {
             "choices": {"type": "array", "items": {"type": "string"}},
             "correctIndex": {"type": "integer"},
             "explanation": {"type": "string"},
+            "difficulty": {
+                "type": "string",
+                "enum": ["easy", "medium", "hard"],
+            },
         },
         "required": ["prompt", "choices", "correctIndex"],
     },
@@ -95,9 +108,14 @@ _GEMINI_SCHEMA = {
 }
 
 
+_DIFFICULTIES = ("easy", "medium", "hard")
+_DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+
+
 def _clean_quiz(items, topic):
     """Keep only well-formed quiz items; clamp a bad correctIndex rather than
-    failing the whole generation."""
+    failing the whole generation. Sort by difficulty (easy first) so the
+    learner warms up before the hard / challenge items."""
     out = []
     for q in items or []:
         prompt = (q.get("prompt") or "").strip()
@@ -110,13 +128,18 @@ def _clean_quiz(items, topic):
             ci = 0
         if ci < 0 or ci >= len(choices):
             ci = 0
+        diff = str(q.get("difficulty") or "medium").lower().strip()
+        if diff not in _DIFFICULTIES:
+            diff = "medium"
         out.append({
             "prompt": prompt,
             "choices": choices,
             "correct_index": ci,
             "explanation": q.get("explanation", "") or "",
             "topic": topic,
+            "difficulty": diff,
         })
+    out.sort(key=lambda x: _DIFFICULTY_ORDER[x["difficulty"]])
     return out
 
 
