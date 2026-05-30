@@ -41,17 +41,20 @@ sentences with a tiny illustrative analogy. Pick whichever is more useful \
 for THIS section. Start the sentence with the example/analogy directly — \
 no preamble like "For example" or "In other words".
    - "quiz": MIX of difficulties for THIS section only — scaled to its \
-complexity. A simple section: 3 items (2 easy + 1 medium). A dense section: \
-4-6 items (1 easy + 2-3 medium + 1-2 hard). If the section involves a \
-specific rule, law, theory, formula, framework or named principle, INCLUDE at \
-least one "hard" challenge question that asks the learner to APPLY the rule \
-to a new scenario (not just recall it). Each: {{"prompt", "choices" (4 \
-strings, plausible distractors not obvious throwaways), "correctIndex" \
-(0-based int), "explanation" (one sentence WHY the correct answer is right), \
-"difficulty" (one of "easy" | "medium" | "hard")}}. \
-Easy = direct recall of a fact stated in the section. Medium = a comparison or \
-why/how question. Hard = apply a rule, theory or principle to a new example, \
-or pick the best inference among close options.
+content. A short section: 4-6 items. A medium section: 6-8 items. A long \
+or dense section: 8-12 items. Use ALL the section's important facts — do \
+NOT artificially cap the quiz at 3 questions. The mix should weight \
+toward medium with some easy and at least one hard per section. If the \
+section involves a specific rule, law, theory, formula, framework or \
+named principle, INCLUDE at least one (preferably two) "hard" challenge \
+questions that ask the learner to APPLY the rule to a new scenario (not \
+just recall it). Each: {{"prompt", "choices" (4 strings, plausible \
+distractors not obvious throwaways), "correctIndex" (0-based int), \
+"explanation" (one sentence WHY the correct answer is right), "difficulty" \
+(one of "easy" | "medium" | "hard")}}. \
+Easy = direct recall of a fact stated in the section. Medium = a \
+comparison or why/how question. Hard = apply a rule, theory or principle \
+to a new example, or pick the best inference among close options.
 - "wordGame": array of 3-6 objects, each {{"word" (2-12 A-Z letters, no spaces), \
 "clue" (one sentence)}}.
 Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
