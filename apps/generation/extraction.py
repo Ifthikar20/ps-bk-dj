@@ -155,10 +155,9 @@ def _youtube_title(video_id: str) -> str | None:
 def _youtube_text(video_id: str) -> str:
     """Fetch the transcript for [video_id] via yt-dlp and join to plain text.
 
-    Prefers manual English captions, falls back to auto-generated English,
-    then any other language translated/used as-is. yt-dlp is actively
-    maintained against YouTube's scraping changes, which is why we use it
-    instead of youtube-transcript-api.
+    yt-dlp writes the subtitle file to a temp dir using its own session
+    (the caption URLs YouTube returns are session-bound, so naive HTTP
+    GETs of them tend to fail). We then read and parse the file.
     """
     try:
         import yt_dlp
@@ -167,86 +166,102 @@ def _youtube_text(video_id: str) -> str:
             "YouTube ingest is not configured on this server."
         ) from exc
 
+    import glob
+    import os
+    import tempfile
+
     url = f"https://www.youtube.com/watch?v={video_id}"
-    opts = {
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitleslangs": ["en", "en-US", "en-GB", "en-AU", "en-CA"],
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": False,
-        "socket_timeout": FETCH_TIMEOUT,
-    }
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as exc:
-        msg = str(exc).lower()
-        if "private" in msg or "unavailable" in msg or "removed" in msg:
+    with tempfile.TemporaryDirectory(prefix="ps-yt-") as tmpdir:
+        opts = {
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            # Accept English first; broaden to any language as a fallback.
+            "subtitleslangs": [
+                "en", "en-US", "en-GB", "en-AU", "en-CA", "en.*",
+                "a.en", "en-orig",
+            ],
+            "subtitlesformat": "vtt/srv3/json3/best",
+            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": FETCH_TIMEOUT,
+            "retries": 2,
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                # download=True is what triggers the subtitle file write;
+                # the actual video is still skipped via skip_download=True.
+                ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            msg = str(exc).lower()
+            if "private" in msg or "unavailable" in msg or "removed" in msg:
+                raise GenerationError(
+                    "That YouTube video is unavailable (private, removed, "
+                    "or region-locked)."
+                ) from exc
+            logger.warning("YouTube yt-dlp DownloadError for %s: %s",
+                           video_id, exc)
             raise GenerationError(
-                "That YouTube video is unavailable (it may be private, "
-                "removed, or region-locked)."
+                "Couldn't read that YouTube video. Try a different link."
             ) from exc
-        logger.warning("YouTube extract_info failed for %s: %s", video_id, exc)
-        raise GenerationError(
-            "Couldn't read that YouTube video. Try a different link."
-        ) from exc
-    except Exception as exc:
-        logger.warning("YouTube yt-dlp error for %s: %s", video_id, exc)
-        raise GenerationError(
-            "Couldn't read that YouTube video. Try a different link."
-        ) from exc
+        except Exception as exc:
+            logger.warning("YouTube yt-dlp error for %s: %s", video_id, exc)
+            raise GenerationError(
+                "Couldn't read that YouTube video. Try a different link."
+            ) from exc
 
-    track_url = _pick_subtitle_url(
-        info.get("subtitles") or {},
-        info.get("automatic_captions") or {},
-    )
-    if not track_url:
-        raise GenerationError(
-            "This YouTube video has no captions available. "
-            "Try a different video that has subtitles enabled."
-        )
+        # Discover the file yt-dlp actually wrote. Prefer .vtt, then srv*,
+        # then json3, then anything.
+        path = _pick_caption_file(tmpdir, video_id)
+        if path is None:
+            raise GenerationError(
+                "This YouTube video has no English captions. "
+                "Try a different video that has subtitles enabled."
+            )
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                body = f.read()
+        except OSError as exc:
+            logger.warning("Reading caption file failed for %s: %s",
+                           video_id, exc)
+            raise GenerationError(
+                "Couldn't load the captions for that YouTube video."
+            ) from exc
 
-    try:
-        resp = requests.get(
-            track_url,
-            timeout=FETCH_TIMEOUT,
-            headers={"User-Agent": "PlayStudyBot/1.0"},
-        )
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        logger.warning("YouTube subtitle download failed for %s: %s", video_id, exc)
-        raise GenerationError(
-            "Couldn't load the captions for that YouTube video."
-        ) from exc
-
-    text = _captions_to_text(resp.text)
+    text = _captions_to_text(body)
     if not text.strip():
         raise GenerationError("This YouTube video's captions are empty.")
     return text
 
 
-def _pick_subtitle_url(subs: dict, auto: dict) -> str | None:
-    """Pick a usable English caption URL. Prefer manual, then auto-generated.
+def _pick_caption_file(tmpdir: str, video_id: str) -> str | None:
+    """Return the path to the most useful subtitle file yt-dlp wrote.
 
-    yt-dlp returns: {lang: [{ext, url, ...}, ...]}. We prefer human formats
-    (vtt, srv*, json3) which we know how to parse.
+    yt-dlp names them like '<id>.<lang>.<ext>'. Pick by extension
+    preference, then by language preference.
     """
-    preferred_exts = ("vtt", "srv3", "srv2", "srv1", "json3")
-    preferred_langs = ("en", "en-US", "en-GB", "en-AU", "en-CA")
-    for source in (subs, auto):  # manual first, then auto
-        for lang in preferred_langs:
-            tracks = source.get(lang) or []
-            for ext in preferred_exts:
-                for t in tracks:
-                    if t.get("ext") == ext and t.get("url"):
-                        return t["url"]
-            # fall back to whatever format the lang has
-            for t in tracks:
-                if t.get("url"):
-                    return t["url"]
-    return None
+    import glob
+    import os
+
+    files = glob.glob(os.path.join(tmpdir, f"{video_id}.*"))
+    if not files:
+        return None
+    pref_exts = ("vtt", "srv3", "srv2", "srv1", "json3")
+    pref_langs = ("en", "en-US", "en-GB", "en-AU", "en-CA",
+                  "en-orig", "a.en")
+
+    def rank(p: str) -> tuple:
+        name = os.path.basename(p)
+        ext = name.rsplit(".", 1)[-1].lower()
+        mid = name[len(video_id) + 1: -(len(ext) + 1)] or ""
+        ext_rank = pref_exts.index(ext) if ext in pref_exts else len(pref_exts)
+        lang_rank = (pref_langs.index(mid) if mid in pref_langs
+                     else len(pref_langs))
+        return (lang_rank, ext_rank)
+
+    files.sort(key=rank)
+    return files[0]
 
 
 def _captions_to_text(body: str) -> str:
