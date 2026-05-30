@@ -153,84 +153,143 @@ def _youtube_title(video_id: str) -> str | None:
 
 
 def _youtube_text(video_id: str) -> str:
-    """Fetch the transcript for [video_id], joining segments to plain text.
+    """Fetch the transcript for [video_id] via yt-dlp and join to plain text.
 
-    Prefers manually-created English captions, then auto-generated English,
-    then any available transcript translated to English. Raises
-    GenerationError with a user-friendly message if nothing is available.
+    Prefers manual English captions, falls back to auto-generated English,
+    then any other language translated/used as-is. yt-dlp is actively
+    maintained against YouTube's scraping changes, which is why we use it
+    instead of youtube-transcript-api.
     """
     try:
-        from youtube_transcript_api import (
-            YouTubeTranscriptApi,
-            NoTranscriptFound,
-            TranscriptsDisabled,
-            VideoUnavailable,
-        )
-    except ImportError as exc:  # dep not installed yet
+        import yt_dlp
+    except ImportError as exc:
         raise GenerationError(
             "YouTube ingest is not configured on this server."
         ) from exc
 
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        "skip_download": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": ["en", "en-US", "en-GB", "en-AU", "en-CA"],
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": False,
+        "socket_timeout": FETCH_TIMEOUT,
+    }
     try:
-        listing = YouTubeTranscriptApi.list_transcripts(video_id)
-    except TranscriptsDisabled as exc:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as exc:
+        msg = str(exc).lower()
+        if "private" in msg or "unavailable" in msg or "removed" in msg:
+            raise GenerationError(
+                "That YouTube video is unavailable (it may be private, "
+                "removed, or region-locked)."
+            ) from exc
+        logger.warning("YouTube extract_info failed for %s: %s", video_id, exc)
         raise GenerationError(
-            "This YouTube video has captions disabled. Try a different video."
-        ) from exc
-    except VideoUnavailable as exc:
-        raise GenerationError(
-            "That YouTube video is unavailable (it may be private or deleted)."
+            "Couldn't read that YouTube video. Try a different link."
         ) from exc
     except Exception as exc:
-        logger.warning("YouTube transcript listing failed for %s: %s", video_id, exc)
+        logger.warning("YouTube yt-dlp error for %s: %s", video_id, exc)
         raise GenerationError(
             "Couldn't read that YouTube video. Try a different link."
         ) from exc
 
-    transcript = None
-    try:
-        transcript = listing.find_manually_created_transcript(["en"])
-    except NoTranscriptFound:
-        pass
-    if transcript is None:
-        try:
-            transcript = listing.find_transcript(["en"])
-        except NoTranscriptFound:
-            pass
-    if transcript is None:
-        try:
-            any_t = next(iter(listing))
-            transcript = any_t.translate("en") if any_t.is_translatable else any_t
-        except StopIteration as exc:
-            raise GenerationError(
-                "This YouTube video has no captions available."
-            ) from exc
-        except Exception as exc:
-            logger.warning(
-                "YouTube translate failed for %s: %s", video_id, exc
-            )
-            raise GenerationError(
-                "Couldn't fetch a usable transcript for that YouTube video."
-            ) from exc
+    track_url = _pick_subtitle_url(
+        info.get("subtitles") or {},
+        info.get("automatic_captions") or {},
+    )
+    if not track_url:
+        raise GenerationError(
+            "This YouTube video has no captions available. "
+            "Try a different video that has subtitles enabled."
+        )
 
     try:
-        segments = transcript.fetch()
-    except Exception as exc:
-        logger.warning("YouTube transcript fetch failed for %s: %s", video_id, exc)
+        resp = requests.get(
+            track_url,
+            timeout=FETCH_TIMEOUT,
+            headers={"User-Agent": "PlayStudyBot/1.0"},
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("YouTube subtitle download failed for %s: %s", video_id, exc)
         raise GenerationError(
             "Couldn't load the captions for that YouTube video."
         ) from exc
 
-    parts = []
-    for seg in segments:
-        text = (seg.get("text") or "").strip()
-        if text and text not in ("[Music]", "[Applause]"):
-            parts.append(text)
-    if not parts:
-        raise GenerationError(
-            "This YouTube video's captions are empty."
-        )
-    return " ".join(parts)
+    text = _captions_to_text(resp.text)
+    if not text.strip():
+        raise GenerationError("This YouTube video's captions are empty.")
+    return text
+
+
+def _pick_subtitle_url(subs: dict, auto: dict) -> str | None:
+    """Pick a usable English caption URL. Prefer manual, then auto-generated.
+
+    yt-dlp returns: {lang: [{ext, url, ...}, ...]}. We prefer human formats
+    (vtt, srv*, json3) which we know how to parse.
+    """
+    preferred_exts = ("vtt", "srv3", "srv2", "srv1", "json3")
+    preferred_langs = ("en", "en-US", "en-GB", "en-AU", "en-CA")
+    for source in (subs, auto):  # manual first, then auto
+        for lang in preferred_langs:
+            tracks = source.get(lang) or []
+            for ext in preferred_exts:
+                for t in tracks:
+                    if t.get("ext") == ext and t.get("url"):
+                        return t["url"]
+            # fall back to whatever format the lang has
+            for t in tracks:
+                if t.get("url"):
+                    return t["url"]
+    return None
+
+
+def _captions_to_text(body: str) -> str:
+    """Parse VTT or YouTube srv3/json3 caption body into plain text.
+
+    Strips timestamps, cue settings, and noise markers like [Music].
+    """
+    body = (body or "").strip()
+    if not body:
+        return ""
+    # JSON3 (yt-dlp's preferred fallback when VTT is unavailable).
+    if body.startswith("{"):
+        try:
+            import json
+            data = json.loads(body)
+            parts = []
+            for event in data.get("events") or []:
+                for seg in event.get("segs") or []:
+                    s = (seg.get("utf8") or "").strip()
+                    if s and s not in ("[Music]", "[Applause]"):
+                        parts.append(s)
+            return " ".join(parts)
+        except Exception:
+            return ""
+    # VTT (default).
+    lines = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("WEBVTT") or line.startswith("Kind:") or \
+                line.startswith("Language:") or line.startswith("NOTE"):
+            continue
+        if "-->" in line:  # timing line
+            continue
+        if line.isdigit():  # cue index
+            continue
+        # Strip inline tags like <c.colorE5E5E5> and <00:00:01.234>
+        line = re.sub(r"<[^>]+>", "", line)
+        if line in ("[Music]", "[Applause]"):
+            continue
+        lines.append(line)
+    return " ".join(lines)
 
 
 def extract_from_link(url: str) -> str:
