@@ -57,12 +57,18 @@ class StudySetCreateSerializer(serializers.Serializer):
         ref = attrs["source_ref"].strip()
         if not ref:
             raise serializers.ValidationError({"source_ref": "This field is required."})
-        if kind == StudySet.SourceKind.LINK and not ref.lower().startswith(
-            ("http://", "https://")
-        ):
-            raise serializers.ValidationError(
-                {"source_ref": "A valid http(s) URL is required for link sources."}
-            )
+        if kind == StudySet.SourceKind.LINK:
+            # Recover from common paste artifacts where a URL is concatenated
+            # to itself (iOS autofill, double-tap suggestions). Keep only the
+            # first scheme-onward substring.
+            lower = ref.lower()
+            second = max(lower.find("http://", 1), lower.find("https://", 1))
+            if second > 0:
+                ref = ref[:second].rstrip("/")
+            if not ref.lower().startswith(("http://", "https://")):
+                raise serializers.ValidationError(
+                    {"source_ref": "A valid http(s) URL is required for link sources."}
+                )
         if kind == StudySet.SourceKind.TEXT and len(ref) < 20:
             raise serializers.ValidationError(
                 {"source_ref": "Pasted text must be at least 20 characters."}
