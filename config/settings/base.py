@@ -45,6 +45,7 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
+    "apps.common.apps.CommonConfig",
     "apps.accounts",
     "apps.studysets",
     "apps.generation",
@@ -102,14 +103,13 @@ DATABASES = {
 
 # SQLite serializes writes via a file lock; with the background generation
 # thread + heartbeats every 15s + rewards writes it is easy to hit
-# "database is locked". WAL lets readers and writers proceed concurrently
-# and `timeout` makes writers wait up to 30s for the lock instead of erroring.
+# "database is locked". The real PRAGMA setup happens in
+# apps.common.apps.CommonConfig.ready() via a connection_created signal
+# because Django's SQLite init_command only runs a single statement and
+# silently drops the second PRAGMA in a "; "-joined string.
 if DATABASES["default"].get("ENGINE", "").endswith("sqlite3"):
     DATABASES["default"].setdefault("OPTIONS", {})
     DATABASES["default"]["OPTIONS"]["timeout"] = 30
-    DATABASES["default"]["OPTIONS"]["init_command"] = (
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"
-    )
 
 # --------------------------------------------------------------------------- #
 # Cache / Celery / Redis

@@ -1,5 +1,9 @@
 """Progress recording + parent-analytics aggregation."""
-from django.db import transaction
+import logging
+import time
+from functools import wraps
+
+from django.db import OperationalError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
@@ -7,11 +11,40 @@ from apps.studysets.models import StudySet
 
 from .models import GuardianLink, SectionProgress
 
+logger = logging.getLogger(__name__)
+
 # A single heartbeat can't add more than this many seconds — stops a client
 # from forging huge "time spent" numbers in one call.
 MAX_HEARTBEAT_SECONDS = 120
 
 
+def _retry_on_lock(max_attempts: int = 5, base_delay: float = 0.1):
+    """Retry the wrapped DB-write helper on SQLite 'database is locked'.
+
+    WAL + busy_timeout already handle 99% of contention; this is a final
+    safety net so a 100ms blip never bubbles up to the user as a 500.
+    """
+    def decorate(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            delay = base_delay
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return fn(*args, **kwargs)
+                except OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == max_attempts:
+                        raise
+                    logger.warning(
+                        "DB locked in %s (attempt %s/%s), retrying in %.2fs",
+                        fn.__name__, attempt, max_attempts, delay,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, 1.0)
+        return wrapper
+    return decorate
+
+
+@_retry_on_lock()
 def record_heartbeat(student, study_set, section_index, section_title, seconds):
     seconds = max(0, min(int(seconds or 0), MAX_HEARTBEAT_SECONDS))
     with transaction.atomic():
@@ -28,6 +61,7 @@ def record_heartbeat(student, study_set, section_index, section_title, seconds):
     return row
 
 
+@_retry_on_lock()
 def mark_complete(student, study_set, section_index, section_title, correct, total):
     with transaction.atomic():
         row, _ = SectionProgress.objects.select_for_update().get_or_create(
