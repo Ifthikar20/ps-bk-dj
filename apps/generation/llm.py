@@ -33,8 +33,13 @@ Return a single JSON object with EXACTLY these keys:
    - "title": a short section heading.
    - "content": 1-3 short paragraphs that PRESERVE the key definitions and \
 details of this part of the source (readable chunks, NOT a one-line summary).
-   - "example": one concrete, real-world example that makes the section \
-relatable to everyday life.
+   - "example": a "Further understanding" anchor that helps the reader \
+build intuition for the section. Either (a) one concrete, relatable \
+real-world example that shows the section's idea in everyday life, OR \
+(b) a single important key term from the section explained in 1-2 plain \
+sentences with a tiny illustrative analogy. Pick whichever is more useful \
+for THIS section. Start the sentence with the example/analogy directly — \
+no preamble like "For example" or "In other words".
    - "quiz": MIX of difficulties for THIS section only — scaled to its \
 complexity. A simple section: 3 items (2 easy + 1 medium). A dense section: \
 4-6 items (1 easy + 2-3 medium + 1-2 hard). If the section involves a \
