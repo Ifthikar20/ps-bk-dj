@@ -58,13 +58,14 @@ class StudySetCreateSerializer(serializers.Serializer):
         if not ref:
             raise serializers.ValidationError({"source_ref": "This field is required."})
         if kind == StudySet.SourceKind.LINK:
-            # Recover from common paste artifacts where a URL is concatenated
-            # to itself (iOS autofill, double-tap suggestions). Keep only the
-            # first scheme-onward substring.
+            # Recover from paste artifacts where the URL is duplicated, either
+            # cleanly (foo.pdf + foo.pdf) or with overlap that drops the
+            # extension (foo. + foo.pdf). The complete URL is always the last
+            # one, so keep everything from the last scheme onward.
             lower = ref.lower()
-            second = max(lower.find("http://", 1), lower.find("https://", 1))
-            if second > 0:
-                ref = ref[:second].rstrip("/")
+            last = max(lower.rfind("http://"), lower.rfind("https://"))
+            if last > 0:
+                ref = ref[last:]
             if not ref.lower().startswith(("http://", "https://")):
                 raise serializers.ValidationError(
                     {"source_ref": "A valid http(s) URL is required for link sources."}
