@@ -80,6 +80,20 @@ class StudySetViewSet(
 
 
 def _enqueue(study_set_id):
+    from django.conf import settings
+
     from apps.generation.tasks import generate_study_set
 
-    generate_study_set.delay(str(study_set_id))
+    # In dev we run with CELERY_TASK_ALWAYS_EAGER=True so .delay() blocks the
+    # caller until the task finishes. That would block the POST request for
+    # the entire LLM round-trip and trip the client's receiveTimeout. Push it
+    # onto a background thread so the view returns 202 immediately.
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        import threading
+
+        threading.Thread(
+            target=lambda: generate_study_set.delay(str(study_set_id)),
+            daemon=True,
+        ).start()
+    else:
+        generate_study_set.delay(str(study_set_id))
