@@ -270,7 +270,30 @@ def _call_anthropic(text: str):
         "input_tokens": int(getattr(message.usage, "input_tokens", 0) or 0),
         "output_tokens": int(getattr(message.usage, "output_tokens", 0) or 0),
     }
-    return json.loads(_strip_json_fence(raw)), usage
+    stop = getattr(message, "stop_reason", None)
+    logger.info(
+        "LLM(anthropic) model=%s stop=%s in=%s out=%s chars=%s max_tokens=%s",
+        settings.ANTHROPIC_MODEL, stop,
+        usage["input_tokens"], usage["output_tokens"], len(raw),
+        settings.LLM_MAX_OUTPUT_TOKENS,
+    )
+    cleaned = _strip_json_fence(raw)
+    try:
+        return json.loads(cleaned), usage
+    except json.JSONDecodeError as exc:
+        tail = cleaned[-400:]
+        logger.warning(
+            "LLM(anthropic) JSON parse failed (stop=%s, out_tokens=%s, chars=%s): %s | tail=%r",
+            stop, usage["output_tokens"], len(cleaned), exc, tail,
+        )
+        if stop == "max_tokens":
+            raise GenerationError(
+                f"AI response was cut off at the token limit "
+                f"({usage['output_tokens']} output tokens). "
+                f"Raise LLM_MAX_OUTPUT_TOKENS (currently {settings.LLM_MAX_OUTPUT_TOKENS}) "
+                f"or shorten the input."
+            ) from exc
+        raise
 
 
 _PROVIDERS = {

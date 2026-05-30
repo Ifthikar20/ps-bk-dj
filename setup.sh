@@ -95,7 +95,7 @@ CELERY_TASK_ALWAYS_EAGER=True
 # --- AI (server-only) — provider: deepseek | local | gemini | anthropic ---
 LLM_PROVIDER=anthropic
 LLM_TEMPERATURE=0.4
-LLM_MAX_OUTPUT_TOKENS=2048
+LLM_MAX_OUTPUT_TOKENS=8192
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
