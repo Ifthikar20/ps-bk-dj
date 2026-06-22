@@ -73,6 +73,25 @@ study set's content and award points it should:
 `quiz` items are `{prompt, choices, correctIndex, explanation, topic}`;
 `words` are `{word, clue}`.
 
+## Play tracking (games I play)
+
+Plays are recorded server-side so history, scores and resume save-state are
+unified across mobile and web (not stored per-client). The game host forwards
+its SDK events here:
+
+```
+POST   /api/v1/games/sessions/                 start    {gameKey, studySetId?}
+PATCH  /api/v1/games/sessions/{id}/            heartbeat {score?, progress?}
+POST   /api/v1/games/sessions/{id}/complete/   finalize  {score?} -> {session, rewards}
+GET    /api/v1/games/sessions/                 my history (?gameKey= &status=)
+GET    /api/v1/games/sessions/{id}/            one play (resume from `progress`)
+```
+
+Completion grants points through the server-authoritative rewards engine
+(reason `"Played a game"`, flat + capped, deduped on the session id so retries
+never double-award). The raw game `score` is client-reported, so it never feeds
+the point economy — it's kept for leaderboards only.
+
 ## How the user sees it
 
 On the next app launch the manifest is fetched and the game is registered.
