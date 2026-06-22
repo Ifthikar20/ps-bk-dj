@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Game, GameSession
+from .models import Game, GameSession, GameTelemetry
 
 
 class GameSerializer(serializers.ModelSerializer):
@@ -12,6 +12,7 @@ class GameSerializer(serializers.ModelSerializer):
         fields = (
             "key",
             "slug",
+            "version",
             "name",
             "description",
             "icon",
@@ -20,7 +21,18 @@ class GameSerializer(serializers.ModelSerializer):
             "difficulty",
             "requires",
             "min_app_version",
+            "sdk_version",
         )
+
+
+class GameTelemetrySerializer(serializers.Serializer):
+    """Input for POST /games/telemetry."""
+
+    game_key = serializers.SlugField(max_length=64)
+    version = serializers.SlugField(max_length=32, required=False, allow_blank=True)
+    kind = serializers.ChoiceField(choices=GameTelemetry.Kind.values)
+    message = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    context = serializers.JSONField(required=False)
 
 
 # Cap the save-state blob so a client can't stuff the DB via the progress field.

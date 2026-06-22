@@ -1,13 +1,19 @@
 {
   "key": "quiz_rush",
   "slug": "quiz-rush",
+  "version": "1",
   "name": "Quiz Rush",
-  "description": "Beat the clock — answer each question before the bar runs out.",
+  "description": "Beat the clock \u2014 answer each question before the bar runs out.",
   "icon": "bolt",
-  "emoji": "⚡",
-  "coverColors": ["0xFFD6F26C", "0xFF6B5CE7"],
+  "emoji": "\u26a1",
+  "coverColors": [
+    "0xFFD6F26C",
+    "0xFF6B5CE7"
+  ],
   "difficulty": "medium",
-  "requires": { "quiz": 1 },
+  "requires": {
+    "quiz": 1
+  },
   "minAppVersion": "",
   "enabled": true,
   "sortOrder": 5

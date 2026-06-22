@@ -8,7 +8,7 @@ flowchart TB
   Dev["Developer / CI"] -- "aws s3 sync" --> S3["S3: playstudy-sdk.js + games/&lt;slug&gt;/"]
   Dev -- "manage.py publish_game game.json" --> DB["Postgres: Game manifest row"]
   App["App (iOS WebView / Web iframe)\nshipped once"] -- "GET /api/v1/games" --> DB
-  App -- "loads games/&lt;slug&gt;/index.html" --> S3
+  App -- "loads games/&lt;slug&gt;/&lt;version&gt;/index.html" --> S3
   App -- "score / gameover (SDK)" --> Sess["POST /games/sessions + /rewards/activity"]
   Sess --> DB
   DB -- "GET /me · /games/sessions" --> Home["Home (iOS & Web): points, streak, score"]
@@ -16,11 +16,12 @@ flowchart TB
 
 ## A game is just a folder with an `index.html`
 
-Every game includes the SDK (`../../playstudy-sdk.js`) and talks to
+Every game lives at `games/<slug>/<version>/index.html`, includes the SDK
+(`../../../playstudy-sdk.js`, at the host root) and talks to
 `window.PlayStudyGame`. The smallest possible game (`games/_template/`):
 
 ```html
-<script src="../../playstudy-sdk.js"></script>
+<script src="../../../playstudy-sdk.js"></script>
 <script>
   var score = 0;
   PlayStudyGame.onInit(function (material) {     // material.quiz / material.words
@@ -59,7 +60,7 @@ python manage.py publish_game apps/games/examples/word_pop.json
    **Library**, and a study set's **Games tab** — filtered by `requires` (e.g.
    Word Pop only shows on sets with ≥ 2 words).
 3. Tapping it opens `GameHostView`, which loads
-   `{GAMES_BASE_URL}/games/word-pop/index.html` in a WebView (iOS) or iframe
+   `{GAMES_BASE_URL}/games/word-pop/<version>/index.html` in a WebView (iOS) or iframe
    (web) and hands the game the study set's words via the SDK.
 4. Editing the game later = re-upload to S3; the new code runs on next open.
    Bad game? Set `enabled=false` (admin or `publish_game`) — gone instantly.

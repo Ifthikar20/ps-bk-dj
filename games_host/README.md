@@ -8,10 +8,15 @@ change in the mobile or backend repos.
 
 ```
 games_host/
-  playstudy-sdk.js          ->  {GAMES_BASE_URL}/playstudy-sdk.js
+  playstudy-sdk.js              ->  {GAMES_BASE_URL}/playstudy-sdk.js
   games/
-    quiz-rush/index.html    ->  {GAMES_BASE_URL}/games/quiz-rush/index.html
+    quiz-rush/1/index.html      ->  {GAMES_BASE_URL}/games/quiz-rush/1/index.html
 ```
+
+Bundles live under an **immutable version folder** (`<slug>/<version>/`) so a
+new version is an atomic deploy and rollback is just pointing the manifest's
+`version` back. See `SECURITY.md` for the bucket policy, CSP, cache headers and
+rollback/kill-switch runbook.
 
 ## The SDK
 
@@ -24,7 +29,7 @@ transport difference between the two hosts (see the Flutter `GameHostView`):
 A game includes it and talks to `window.PlayStudyGame`:
 
 ```html
-<script src="../../playstudy-sdk.js"></script>
+<script src="../../../playstudy-sdk.js"></script>
 <script>
   PlayStudyGame.onInit(function (material) {
     // material.quiz: [{prompt, choices, correctIndex, explanation, topic}]
@@ -66,7 +71,7 @@ the user sees a new game.
 The SDK falls back to URL content, so a game runs standalone in a browser:
 
 ```
-games/quiz-rush/index.html?quiz=<base64url-json>
+games/quiz-rush/1/index.html?quiz=<base64url-json>
 ```
 
 Against the running app, point `--dart-define=GAMES_BASE_URL` at wherever you

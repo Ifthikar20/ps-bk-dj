@@ -31,6 +31,7 @@ from apps.games.models import Game
 FIELD_MAP = {
     "key": "key",
     "slug": "slug",
+    "version": "version",
     "name": "name",
     "description": "description",
     "icon": "icon",
@@ -39,6 +40,9 @@ FIELD_MAP = {
     "difficulty": "difficulty",
     "requires": "requires",
     "minAppVersion": "min_app_version",
+    "sdkVersion": "sdk_version",
+    "maxScore": "max_score",
+    "audience": "audience",
     "enabled": "enabled",
     "sortOrder": "sort_order",
 }
@@ -58,9 +62,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Validate and report what would change without writing.",
         )
+        parser.add_argument(
+            "--skip-verify",
+            action="store_true",
+            help="Skip checking that the bundle exists on the games host.",
+        )
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
+        skip_verify = options["skip_verify"]
         entries = self._collect_entries(options["sources"])
 
         created = updated = 0
@@ -80,6 +90,11 @@ class Command(BaseCommand):
             except ValidationError as exc:
                 raise CommandError(f"'{key}' is invalid: {exc.message_dict}")
 
+            # Don't enable a row whose bundle isn't actually live — the #1 way a
+            # publish "breaks for everyone" is a manifest/asset mismatch.
+            if instance.enabled and not skip_verify:
+                self._verify_bundle(instance)
+
             verb = "would update" if existing else "would create"
             if not dry_run:
                 instance.save()
@@ -88,7 +103,9 @@ class Command(BaseCommand):
                     updated += 1
                 else:
                     created += 1
-            self.stdout.write(f"  {verb}: {key} -> /games/{instance.slug}/")
+            self.stdout.write(
+                f"  {verb}: {key} -> /games/{instance.slug}/{instance.version}/"
+            )
 
         summary = (
             f"Dry run: {len(entries)} game(s) validated, no changes written."
@@ -116,6 +133,35 @@ class Command(BaseCommand):
                 return fh.read()
         except OSError as exc:
             raise CommandError(f"Cannot read {path}: {exc}.")
+
+    def _verify_bundle(self, game):
+        """HEAD the bundle's index.html so we never enable a row whose assets
+        aren't on the host yet. No-op if GAMES_BASE_URL isn't configured."""
+        from urllib.error import URLError
+        from urllib.request import Request, urlopen
+
+        from django.conf import settings
+
+        base = (getattr(settings, "GAMES_BASE_URL", "") or "").rstrip("/")
+        if not base:
+            self.stdout.write(
+                self.style.WARNING(
+                    "  (GAMES_BASE_URL unset — skipping bundle check; "
+                    "use --skip-verify to silence)"
+                )
+            )
+            return
+        url = f"{base}/games/{game.slug}/{game.version}/index.html"
+        try:
+            req = Request(url, method="HEAD")
+            with urlopen(req, timeout=10) as resp:
+                if resp.status >= 400:
+                    raise CommandError(f"'{game.key}': bundle not reachable ({resp.status}) at {url}")
+        except URLError as exc:
+            raise CommandError(
+                f"'{game.key}': bundle not reachable at {url} ({exc}). "
+                "Upload it first, or pass --skip-verify."
+            )
 
     @staticmethod
     def _to_fields(raw):

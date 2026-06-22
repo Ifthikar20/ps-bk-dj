@@ -50,6 +50,10 @@ class Game(UUIDModel, TimeStampedModel):
         MEDIUM = "medium", "Medium"
         HARD = "hard", "Hard"
 
+    class Audience(models.TextChoices):
+        STABLE = "stable", "Stable"
+        BETA = "beta", "Beta"
+
     key = models.SlugField(
         max_length=64,
         unique=True,
@@ -59,7 +63,13 @@ class Game(UUIDModel, TimeStampedModel):
     slug = models.SlugField(
         max_length=64,
         help_text="Path segment under the games base URL: "
-        "{gamesBaseUrl}/games/<slug>/index.html",
+        "{gamesBaseUrl}/games/<slug>/<version>/index.html",
+    )
+    version = models.SlugField(
+        max_length=32,
+        default="1",
+        help_text="Immutable bundle version, used as a path segment "
+        "(.../<slug>/<version>/). Bump it to deploy; point back to roll back.",
     )
     name = models.CharField(max_length=80)
     description = models.CharField(max_length=200)
@@ -97,12 +107,30 @@ class Game(UUIDModel, TimeStampedModel):
     sort_order = models.PositiveIntegerField(
         default=0, help_text="Lower sorts first; ties broken by name."
     )
+    sdk_version = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="PlayStudy SDK version this bundle targets. Clients hide "
+        "games whose sdkVersion is newer than the app supports.",
+    )
+    max_score = models.PositiveIntegerField(
+        default=0,
+        help_text="Server-side sanity cap on a play's score (0 = no cap). "
+        "Guards leaderboards against tampered client-reported scores.",
+    )
+    audience = models.CharField(
+        max_length=8,
+        choices=Audience.choices,
+        default=Audience.STABLE,
+        db_index=True,
+        help_text="'beta' games are only returned when the client asks for the "
+        "beta channel — use it to canary a game before going stable.",
+    )
 
     class Meta:
         ordering = ("sort_order", "name")
 
     def __str__(self):
-        return f"{self.name} ({self.key})"
+        return f"{self.name} ({self.key}@{self.version})"
 
     def clean(self):
         # Surface "0xFFAABBCC" / "#RRGGBB" coercion errors in the admin rather
@@ -160,3 +188,36 @@ class GameSession(UUIDModel, TimeStampedModel):
 
     def __str__(self):
         return f"{self.user_id} · {self.game_key} · {self.status}"
+
+
+class GameTelemetry(TimeStampedModel):
+    """Lightweight signal from the game host so a broken remote bundle is
+    visible without waiting for user complaints. Since games are pushed to S3
+    with no review, this is the main way to learn that one failed to load or
+    threw at runtime.
+    """
+
+    class Kind(models.TextChoices):
+        LOADED = "loaded", "Loaded"
+        LOAD_FAILED = "load_failed", "Load failed"
+        ERROR = "error", "Runtime error"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="game_telemetry",
+        null=True,
+        blank=True,
+    )
+    game_key = models.SlugField(max_length=64, db_index=True)
+    version = models.SlugField(max_length=32, blank=True, default="")
+    kind = models.CharField(max_length=12, choices=Kind.choices, db_index=True)
+    message = models.CharField(max_length=500, blank=True, default="")
+    context = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=["game_key", "kind", "-created_at"])]
+
+    def __str__(self):
+        return f"{self.game_key} · {self.kind}"

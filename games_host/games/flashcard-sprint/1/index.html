@@ -29,8 +29,9 @@
   <body>
     <div id="app">Loading…</div>
 
-    <!-- The only dependency. On S3 the SDK sits one level above all games. -->
-    <script src="../../playstudy-sdk.js"></script>
+    <!-- The only dependency. SDK is at the host root; bundle is at
+         games/<slug>/<version>/, so it's three levels up. -->
+    <script src="../../../playstudy-sdk.js"></script>
     <script>
       (function () {
         var app = document.getElementById("app");

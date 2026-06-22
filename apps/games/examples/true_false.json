@@ -1,13 +1,19 @@
 {
   "key": "true_false_blitz",
   "slug": "true-false",
+  "version": "1",
   "name": "True / False Blitz",
   "description": "Is the shown answer right? Tap True or False before the next one.",
   "icon": "quiz",
-  "emoji": "✅",
-  "coverColors": ["0xFF8E7BFF", "0xFF1F1B2E"],
+  "emoji": "\u2705",
+  "coverColors": [
+    "0xFF8E7BFF",
+    "0xFF1F1B2E"
+  ],
   "difficulty": "easy",
-  "requires": { "quiz": 1 },
+  "requires": {
+    "quiz": 1
+  },
   "minAppVersion": "",
   "enabled": true,
   "sortOrder": 6

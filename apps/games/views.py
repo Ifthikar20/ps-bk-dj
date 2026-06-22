@@ -4,15 +4,17 @@ from rest_framework.decorators import action
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.common.permissions import IsOwner
 
-from .models import Game, GameSession
+from .models import Game, GameSession, GameTelemetry
 from .serializers import (
     GameSerializer,
     GameSessionSerializer,
     GameSessionStartSerializer,
     GameSessionUpdateSerializer,
+    GameTelemetrySerializer,
 )
 
 
@@ -22,8 +24,11 @@ class GameListView(ListAPIView):
     Returns only enabled games, in admin order. Non-sensitive catalog data the
     app registers at startup, so it is intentionally unauthenticated (like
     /health), overriding the project-wide IsAuthenticated default. Version
-    gating (min_app_version) is left to the client so one manifest serves every
-    app version, iOS and web alike.
+    gating (min_app_version / sdk_version) is left to the client so one manifest
+    serves every app version, iOS and web alike.
+
+    Channels: stable by default; ``?channel=beta`` also returns beta games so a
+    new bundle can be canaried before promoting it to stable.
     """
 
     permission_classes = [AllowAny]
@@ -32,7 +37,34 @@ class GameListView(ListAPIView):
     pagination_class = None  # small, fully-cached list — return it whole
 
     def get_queryset(self):
-        return Game.objects.filter(enabled=True)
+        qs = Game.objects.filter(enabled=True)
+        if self.request.query_params.get("channel") != "beta":
+            qs = qs.filter(audience=Game.Audience.STABLE)
+        return qs
+
+
+class GameTelemetryView(APIView):
+    """POST /games/telemetry — record a load/error signal from the game host.
+
+    Games ship to S3 with no review, so this is how a broken bundle becomes
+    visible. Best-effort and cheap; failures here never affect gameplay.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        data = GameTelemetrySerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        v = data.validated_data
+        GameTelemetry.objects.create(
+            user=request.user,
+            game_key=v["game_key"],
+            version=v.get("version", ""),
+            kind=v["kind"],
+            message=v.get("message", ""),
+            context=v.get("context", {}),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class GameSessionViewSet(
@@ -104,6 +136,15 @@ class GameSessionViewSet(
             body = GameSessionUpdateSerializer(data=request.data)
             body.is_valid(raise_exception=True)
             self._apply(session, body.validated_data)
+            # Sanity-cap the client-reported score against the game's max so a
+            # tampered bundle can't post an absurd score to the leaderboard.
+            cap = (
+                Game.objects.filter(key=session.game_key)
+                .values_list("max_score", flat=True)
+                .first()
+            )
+            if cap:
+                session.score = min(session.score, cap)
             session.status = GameSession.Status.COMPLETED
             session.completed_at = timezone.now()
             session.save(

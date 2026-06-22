@@ -210,6 +210,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Where game bundles are served from (CDN/S3 origin). Used by publish_game to
+# verify a bundle exists before enabling its catalog row. Keep in sync with the
+# app's --dart-define=GAMES_BASE_URL.
+GAMES_BASE_URL = config("GAMES_BASE_URL", default="")
+
 AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME", default="")
 AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="")
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default="")

@@ -16,8 +16,9 @@
   <body>
     <div id="app">Loading…</div>
 
-    <!-- The ONLY dependency. Hosted one level above all games on S3. -->
-    <script src="../../playstudy-sdk.js"></script>
+    <!-- The ONLY dependency. The SDK sits at the games-host root; this bundle
+         lives at games/<slug>/<version>/, so it's three levels up. -->
+    <script src="../../../playstudy-sdk.js"></script>
     <script>
       // The smallest possible PlayStudy game: receive content, score, end.
       var score = 0;
