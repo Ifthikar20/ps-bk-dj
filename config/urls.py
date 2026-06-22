@@ -15,6 +15,7 @@ api_v1 = [
     path("", include("apps.subscriptions.urls")),
     path("", include("apps.examprep.urls")),
     path("", include("apps.family.urls")),
+    path("", include("apps.games.urls")),
 ]
 
 urlpatterns = [
