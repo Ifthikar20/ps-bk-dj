@@ -30,6 +30,7 @@ _MAX_POINTS = {
     "Guessed a word": 15,
     "Super Dash checkpoint": 5,
     "Daily exam session": 60,     # correct capped at 10
+    "Played a game": 5,           # flat completion reward, deduped per session
 }
 
 
@@ -53,6 +54,11 @@ def _points_for(reason: str, context: dict) -> int:
         points = 5
     elif reason == "Daily exam session":
         points = 10 + _int(context.get("correct")) * 5
+    elif reason == "Played a game":
+        # Flat reward for finishing any game. Game scores vary wildly across
+        # titles, so the raw (client-reported) score never feeds the economy —
+        # it's stored on the session for leaderboards only.
+        points = 5
     else:
         raise DomainError(f"Unknown reward reason: {reason}", code="unknown_reason")
     return min(points, _MAX_POINTS.get(reason, points))

@@ -1,6 +1,19 @@
 from rest_framework import serializers
 
-from .models import Game
+from .models import Game, GameSession
+
+# Cap the save-state blob so a client can't stuff the DB via the progress field.
+MAX_PROGRESS_BYTES = 32 * 1024
+
+
+def _validate_progress_size(value):
+    import json
+
+    if value and len(json.dumps(value)) > MAX_PROGRESS_BYTES:
+        raise serializers.ValidationError(
+            f"progress exceeds {MAX_PROGRESS_BYTES} bytes."
+        )
+    return value
 
 
 class GameSerializer(serializers.ModelSerializer):
@@ -24,3 +37,41 @@ class GameSerializer(serializers.ModelSerializer):
             "requires",
             "min_app_version",
         )
+
+
+class GameSessionSerializer(serializers.ModelSerializer):
+    """Read shape for a play record / play history."""
+
+    class Meta:
+        model = GameSession
+        fields = (
+            "id",
+            "game_key",
+            "study_set_id",
+            "status",
+            "score",
+            "progress",
+            "reward_points",
+            "created_at",
+            "completed_at",
+        )
+        read_only_fields = fields
+
+
+class GameSessionStartSerializer(serializers.Serializer):
+    """Input for starting a play: POST /games/sessions/."""
+
+    game_key = serializers.SlugField(max_length=64)
+    study_set_id = serializers.UUIDField(required=False, allow_null=True)
+    progress = serializers.JSONField(
+        required=False, validators=[_validate_progress_size]
+    )
+
+
+class GameSessionUpdateSerializer(serializers.Serializer):
+    """Input for a heartbeat (PATCH) or completion: score / save-state."""
+
+    score = serializers.IntegerField(required=False, min_value=0)
+    progress = serializers.JSONField(
+        required=False, validators=[_validate_progress_size]
+    )

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -110,3 +111,62 @@ class Game(UUIDModel, TimeStampedModel):
         super().clean()
         _validate_cover_colors(self.cover_colors)
         _validate_requires(self.requires)
+
+
+class GameSession(UUIDModel, TimeStampedModel):
+    """One play of a game by a user — the server-owned record of "games I play".
+
+    Unified across platforms: whether the game runs in the mobile WebView or a
+    web iframe, the host forwards the same SDK events (progress / score /
+    gameover) here, so play history, save-state (resume) and high scores live
+    on the server, not in each client. Points are awarded through the
+    server-authoritative rewards engine on completion (deduped per session), so
+    a tampered client can't mint points.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+        ABANDONED = "abandoned", "Abandoned"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="game_sessions",
+    )
+    # Keep the catalog row for joins, but also snapshot the key so history
+    # survives a game being disabled or deleted.
+    game = models.ForeignKey(
+        Game,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sessions",
+    )
+    game_key = models.SlugField(max_length=64, db_index=True)
+    study_set_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="Optional: the study set this play drew its content from.",
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True
+    )
+    score = models.PositiveIntegerField(default=0)
+    progress = models.JSONField(
+        default=dict, blank=True, help_text="Opaque save-state blob for resume."
+    )
+    reward_points = models.PositiveIntegerField(
+        default=0, help_text="Points granted on completion (by the rewards engine)."
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["user", "game_key", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} · {self.game_key} · {self.status}"

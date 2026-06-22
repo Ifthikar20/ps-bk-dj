@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Game
+from .models import Game, GameSession
 
 
 @admin.register(Game)
@@ -16,3 +16,19 @@ class GameAdmin(admin.ModelAdmin):
         ("Gating", {"fields": ("requires", "min_app_version", "enabled", "sort_order")}),
         ("Meta", {"fields": ("id", "created_at", "updated_at")}),
     )
+
+
+@admin.register(GameSession)
+class GameSessionAdmin(admin.ModelAdmin):
+    list_display = (
+        "game_key",
+        "user",
+        "status",
+        "score",
+        "reward_points",
+        "created_at",
+        "completed_at",
+    )
+    list_filter = ("status", "game_key")
+    search_fields = ("game_key", "user__email")
+    readonly_fields = ("id", "created_at", "updated_at", "completed_at")
