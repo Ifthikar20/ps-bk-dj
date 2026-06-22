@@ -1,0 +1,14 @@
+{
+  "key": "word_pop",
+  "slug": "word-pop",
+  "name": "Word Pop",
+  "description": "Read the clue, pop the matching word before the others.",
+  "icon": "extension",
+  "emoji": "🫧",
+  "coverColors": ["0xFF22C55E", "0xFF134E2A"],
+  "difficulty": "medium",
+  "requires": { "words": 2 },
+  "minAppVersion": "",
+  "enabled": true,
+  "sortOrder": 7
+}

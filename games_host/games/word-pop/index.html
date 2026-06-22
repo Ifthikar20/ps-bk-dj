@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Word Pop</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { font-family: -apple-system, system-ui, sans-serif; color: #fff;
+        background: linear-gradient(160deg, #22C55E, #134E2A);
+        display: flex; align-items: center; justify-content: center; }
+      #app { width: 100%; max-width: 560px; padding: 22px; text-align: center; }
+      .hud { display: flex; justify-content: space-between; font-weight: 800; margin-bottom: 16px; }
+      .pill { background: rgba(255,255,255,.18); padding: 6px 12px; border-radius: 999px; }
+      .clue { font-size: 18px; min-height: 80px; display: flex; align-items: center; justify-content: center; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+      .bubble { font-size: 18px; font-weight: 800; padding: 22px; border: none; border-radius: 999px;
+        background: rgba(255,255,255,.92); color: #134E2A; }
+      .bubble.good { background: #d6f26c; } .bubble.bad { background: #ef4444; color: #fff; }
+      .big { font-size: 44px; font-weight: 900; }
+    </style>
+  </head>
+  <body>
+    <div id="app">Loading…</div>
+    <script src="../../playstudy-sdk.js"></script>
+    <script>
+      (function () {
+        var app = document.getElementById("app");
+        var words = [], i = 0, score = 0, locked = false;
+
+        PlayStudyGame.onInit(function (m) {
+          words = (m.words || []).filter(function (w) { return w && w.word && w.clue; });
+          if (words.length < 2) {
+            app.innerHTML = "<div class='big'>Word Pop</div><p>Needs at least 2 words.</p>";
+            return;
+          }
+          i = 0; score = 0;
+          render();
+        });
+
+        function render() {
+          locked = false;
+          var w = words[i];
+          var options = pickOptions(w.word);
+          app.innerHTML =
+            '<div class="hud"><span class="pill">' + (i + 1) + " / " + words.length +
+            '</span><span class="pill">⭐ ' + score + "</span></div>" +
+            '<div class="clue">' + esc(w.clue) + "</div><div class='grid' id='grid'></div>";
+          var grid = document.getElementById("grid");
+          options.forEach(function (opt) {
+            var b = document.createElement("button");
+            b.className = "bubble";
+            b.textContent = opt;
+            b.onclick = function () { answer(opt, w.word, b); };
+            grid.appendChild(b);
+          });
+        }
+
+        // The answer plus up to 3 distractors drawn from other words.
+        function pickOptions(answer) {
+          var others = words.map(function (w) { return w.word; })
+            .filter(function (x) { return x !== answer; });
+          shuffle(others);
+          var opts = [answer].concat(others.slice(0, 3));
+          shuffle(opts);
+          return opts;
+        }
+
+        function answer(picked, correct, btn) {
+          if (locked) return;
+          locked = true;
+          if (picked === correct) {
+            score += 10;
+            PlayStudyGame.score(score);
+            btn.classList.add("good");
+            PlayStudyGame.reward("Guessed a word");
+          } else {
+            btn.classList.add("bad");
+          }
+          i++;
+          if (i >= words.length) return setTimeout(finish, 400);
+          setTimeout(render, 400);
+        }
+
+        function finish() {
+          app.innerHTML = "<div>Final score</div><div class='big'>" + score + "</div>";
+          PlayStudyGame.gameover(score);
+        }
+
+        function shuffle(a) {
+          for (var j = a.length - 1; j > 0; j--) {
+            var k = Math.floor(Math.random() * (j + 1));
+            var t = a[j]; a[j] = a[k]; a[k] = t;
+          }
+        }
+        function esc(s) {
+          return String(s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

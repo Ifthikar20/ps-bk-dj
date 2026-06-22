@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Template Game</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1f1b2e; color: #fff;
+        font-family: -apple-system, system-ui, sans-serif; }
+      #app { height: 100%; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 16px; }
+      button { font-size: 18px; padding: 14px 24px; border: none; border-radius: 12px;
+        background: #d6f26c; color: #1f1b2e; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <div id="app">Loading…</div>
+
+    <!-- The ONLY dependency. Hosted one level above all games on S3. -->
+    <script src="../../playstudy-sdk.js"></script>
+    <script>
+      // The smallest possible PlayStudy game: receive content, score, end.
+      var score = 0;
+      var app = document.getElementById("app");
+
+      PlayStudyGame.onInit(function (material) {
+        var n = (material.quiz || []).length;
+        app.innerHTML =
+          "<div>You have <b>" + n + "</b> questions.</div>" +
+          '<button id="go">Score +10</button>' +
+          '<button id="end">Finish</button>';
+        document.getElementById("go").onclick = function () {
+          score += 10;
+          PlayStudyGame.score(score);   // tell the app the live score
+        };
+        document.getElementById("end").onclick = function () {
+          PlayStudyGame.gameover(score); // end the play; score is recorded
+        };
+      });
+    </script>
+  </body>
+</html>

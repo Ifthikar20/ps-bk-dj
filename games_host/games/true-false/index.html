@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>True / False Blitz</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { font-family: -apple-system, system-ui, sans-serif; color: #fff;
+        background: linear-gradient(160deg, #8E7BFF, #1f1b2e);
+        display: flex; align-items: center; justify-content: center; }
+      #app { width: 100%; max-width: 540px; padding: 22px; text-align: center; }
+      .hud { display: flex; justify-content: space-between; font-weight: 800; margin-bottom: 18px; }
+      .pill { background: rgba(255,255,255,.15); padding: 6px 12px; border-radius: 999px; }
+      .claim { font-size: 20px; font-weight: 700; line-height: 1.35; min-height: 120px;
+        display: flex; align-items: center; justify-content: center; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+      button { font-size: 18px; font-weight: 800; padding: 18px; border: none;
+        border-radius: 16px; color: #1f1b2e; }
+      .t { background: #22c55e; } .f { background: #ef4444; color: #fff; }
+      .big { font-size: 44px; font-weight: 900; }
+    </style>
+  </head>
+  <body>
+    <div id="app">Loading…</div>
+    <script src="../../playstudy-sdk.js"></script>
+    <script>
+      (function () {
+        var app = document.getElementById("app");
+        var rounds = [], i = 0, score = 0, locked = false;
+
+        PlayStudyGame.onInit(function (m) {
+          var quiz = (m.quiz || []).filter(function (q) {
+            return q && q.prompt && Array.isArray(q.choices);
+          });
+          if (!quiz.length) {
+            app.innerHTML = "<div class='big'>True / False</div><p>No quiz in this set yet.</p>";
+            return;
+          }
+          // Each round shows the question with EITHER the right answer (=> True)
+          // or a random wrong one (=> False). Player decides.
+          rounds = quiz.map(function (q) {
+            var showCorrect = Math.random() < 0.5;
+            var shown = showCorrect
+              ? q.choices[q.correctIndex]
+              : q.choices[(q.correctIndex + 1 + Math.floor(Math.random() * (q.choices.length - 1))) % q.choices.length];
+            return { prompt: q.prompt, shown: shown, isTrue: shown === q.choices[q.correctIndex] };
+          });
+          i = 0; score = 0;
+          render();
+        });
+
+        function render() {
+          locked = false;
+          var r = rounds[i];
+          app.innerHTML =
+            '<div class="hud"><span class="pill">' + (i + 1) + " / " + rounds.length +
+            '</span><span class="pill">⭐ ' + score + "</span></div>" +
+            '<div class="claim">“' + esc(r.prompt) + "”<br><br><b>Answer: " + esc(r.shown) + "</b></div>" +
+            '<div class="row"><button class="t" id="tBtn">TRUE</button>' +
+            '<button class="f" id="fBtn">FALSE</button></div>';
+          document.getElementById("tBtn").onclick = function () { answer(true); };
+          document.getElementById("fBtn").onclick = function () { answer(false); };
+        }
+
+        function answer(said) {
+          if (locked) return;
+          locked = true;
+          if (said === rounds[i].isTrue) {
+            score += 10;
+            PlayStudyGame.score(score);
+            PlayStudyGame.reward("Finished a quiz");
+          }
+          i++;
+          if (i >= rounds.length) return finish();
+          setTimeout(render, 250);
+        }
+
+        function finish() {
+          app.innerHTML = "<div>Final score</div><div class='big'>" + score + "</div>";
+          PlayStudyGame.gameover(score);
+        }
+
+        function esc(s) {
+          return String(s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>
