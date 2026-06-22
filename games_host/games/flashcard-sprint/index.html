@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Flashcard Sprint</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { font-family: -apple-system, system-ui, sans-serif; color: #fff;
+        background: linear-gradient(160deg, #6B5CE7, #1F1B2E);
+        display: flex; align-items: center; justify-content: center; }
+      #app { width: 100%; max-width: 520px; padding: 24px; text-align: center; }
+      .hud { display: flex; justify-content: space-between; font-weight: 800; margin-bottom: 20px; }
+      .pill { background: rgba(255,255,255,.16); padding: 6px 12px; border-radius: 999px; }
+      .card { background: rgba(255,255,255,.95); color: #1F1B2E; border-radius: 20px;
+        padding: 36px 20px; min-height: 180px; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px; }
+      .label { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; }
+      .clue { font-size: 20px; font-weight: 600; }
+      .word { font-size: 30px; font-weight: 900; color: #6B5CE7; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+      button { font-size: 17px; font-weight: 800; padding: 16px; border: none; border-radius: 14px; }
+      .reveal { width: 100%; background: #D6F26C; color: #1F1B2E; margin-top: 18px; }
+      .got { background: #22C55E; color: #fff; } .miss { background: rgba(255,255,255,.2); color: #fff; }
+      .big { font-size: 46px; font-weight: 900; }
+    </style>
+  </head>
+  <body>
+    <div id="app">Loading…</div>
+
+    <!-- The only dependency. On S3 the SDK sits one level above all games. -->
+    <script src="../../playstudy-sdk.js"></script>
+    <script>
+      (function () {
+        var app = document.getElementById("app");
+        var cards = [], i = 0, score = 0;
+
+        // 1) Receive the study set's word challenges.
+        PlayStudyGame.onInit(function (material) {
+          cards = (material.words || []).filter(function (w) { return w && w.word && w.clue; });
+          if (!cards.length) {
+            app.innerHTML = "<div class='big'>Flashcard Sprint</div><p>No words in this set yet.</p>";
+            return;
+          }
+          i = 0; score = 0;
+          renderClue();
+        });
+
+        // 2) Show the clue; player recalls, then reveals.
+        function renderClue() {
+          var c = cards[i];
+          app.innerHTML =
+            hud() +
+            '<div class="card"><div class="label">Clue</div>' +
+            '<div class="clue">' + esc(c.clue) + "</div></div>" +
+            '<button class="reveal" id="reveal">Reveal word</button>';
+          document.getElementById("reveal").onclick = renderAnswer;
+        }
+
+        // 3) Reveal the word; player self-grades.
+        function renderAnswer() {
+          var c = cards[i];
+          app.innerHTML =
+            hud() +
+            '<div class="card"><div class="label">Answer</div>' +
+            '<div class="word">' + esc(c.word) + "</div>" +
+            '<div class="clue" style="opacity:.6">' + esc(c.clue) + "</div></div>" +
+            '<div class="row"><button class="miss" id="miss">Missed</button>' +
+            '<button class="got" id="got">Got it</button></div>';
+          document.getElementById("got").onclick = function () { next(true); };
+          document.getElementById("miss").onclick = function () { next(false); };
+        }
+
+        function next(gotIt) {
+          if (gotIt) {
+            score += 10;
+            PlayStudyGame.score(score);            // report live score to the app
+            PlayStudyGame.reward("Guessed a word"); // request capped points (server decides)
+          }
+          i++;
+          if (i >= cards.length) return finish();
+          renderClue();
+        }
+
+        // 4) End the run — the final score is recorded server-side.
+        function finish() {
+          app.innerHTML =
+            "<div>Score</div><div class='big'>" + score + "</div>" +
+            "<div style='opacity:.7'>" + (score / 10) + " / " + cards.length + " recalled</div>";
+          PlayStudyGame.gameover(score);
+        }
+
+        function hud() {
+          return '<div class="hud"><span class="pill">' + (i + 1) + " / " + cards.length +
+            '</span><span class="pill">⭐ ' + score + "</span></div>";
+        }
+        function esc(s) {
+          return String(s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>
