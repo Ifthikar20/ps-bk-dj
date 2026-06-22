@@ -158,6 +158,22 @@
     },
   };
 
+  // On the web origin, register the service worker so bundles play offline
+  // after one online load. Skipped on the native local server (127.0.0.1),
+  // where the app caches bundles to disk itself.
+  if (
+    typeof navigator !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    location.hostname !== '127.0.0.1' &&
+    location.hostname !== 'localhost'
+  ) {
+    try {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   // Announce readiness as soon as the SDK loads.
   send('ready');
 })();

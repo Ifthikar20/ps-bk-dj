@@ -66,6 +66,22 @@ The app fetches the manifest at startup and renders the game automatically.
 See `apps/games/README.md` for the manifest fields, play-tracking API, and how
 the user sees a new game.
 
+## Offline play (download once, run locally — not streaming)
+
+Games are not streamed; a bundle is fetched from S3 once, cached on the device,
+and run from local storage, so it works offline afterwards.
+
+- **Each bundle ships a `bundle.json`** listing its files. Generate it before
+  uploading: `node tools/gen-bundle-json.mjs`. The app reads it to know which
+  files to download (falls back to just `index.html` if absent).
+- **iOS / mobile:** the app downloads the bundle (+ the SDK) to its cache,
+  mirroring `/games/<slug>/<version>/…`, and serves it from a local HTTP server
+  on `127.0.0.1`. Versioned paths are immutable, so a cached bundle is never
+  re-downloaded. The app also pre-downloads enabled games at startup so they're
+  ready offline before they're opened.
+- **Web:** `sw.js` (this folder) is a cache-first service worker the SDK
+  registers on the web origin; bundles play offline after one online load.
+
 ## Testing locally
 
 The SDK falls back to URL content, so a game runs standalone in a browser:
