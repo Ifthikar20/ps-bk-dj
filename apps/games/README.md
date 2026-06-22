@@ -58,20 +58,23 @@ round-tripped straight from the API.
 
 ## The HTML game contract
 
-The bundle is hosted in the app's `WebGameView` (a WebView). To receive the
-study set's content and award points it should:
+Games are built against the **PlayStudy Game SDK** (`games_host/playstudy-sdk.js`),
+which hides the mobile-vs-web transport difference. A game includes it and uses
+`window.PlayStudyGame`:
 
-- Read `quiz` / `words` from the URL query (`?quiz=<base64url-json>&words=<base64url-json>`),
-  **or** implement `window.PlayStudyInit(payload)` where
-  `payload = { quiz: [...], words: [...] }` — the host calls it on load.
-- Post messages to the `PlayStudy` JS channel:
-  - `{"type":"ready"}` — ask the host to (re)inject the payload.
-  - `{"type":"reward","reason":"<gameplay reason>"}` — the server recomputes
-    and caps points; only recognized gameplay reasons are accepted.
-  - `{"type":"score", ...}` / `{"type":"gameover", ...}` — handled in-game.
+```html
+<script src="../../playstudy-sdk.js"></script>
+<script>
+  PlayStudyGame.onInit(function (m) { start(m.quiz, m.words); });
+  PlayStudyGame.score(120);
+  PlayStudyGame.reward("Finished a quiz");   // server recomputes + caps points
+  PlayStudyGame.gameover(120);               // server grants the completion reward
+</script>
+```
 
-`quiz` items are `{prompt, choices, correctIndex, explanation, topic}`;
-`words` are `{word, clue}`.
+`quiz` items are `{prompt, choices, correctIndex, explanation, topic}`; `words`
+are `{word, clue}`. See `games_host/README.md` for the full SDK reference and a
+complete reference game (`quiz-rush`).
 
 ## Play tracking (games I play)
 
