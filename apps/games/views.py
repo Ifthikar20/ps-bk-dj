@@ -1,17 +1,38 @@
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.common.permissions import IsOwner
 
-from .models import GameSession
+from .models import Game, GameSession
 from .serializers import (
+    GameSerializer,
     GameSessionSerializer,
     GameSessionStartSerializer,
     GameSessionUpdateSerializer,
 )
+
+
+class GameListView(ListAPIView):
+    """GET /games — the public catalog of S3-hosted web games.
+
+    Returns only enabled games, in admin order. Non-sensitive catalog data the
+    app registers at startup, so it is intentionally unauthenticated (like
+    /health), overriding the project-wide IsAuthenticated default. Version
+    gating (min_app_version) is left to the client so one manifest serves every
+    app version, iOS and web alike.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = GameSerializer
+    pagination_class = None  # small, fully-cached list — return it whole
+
+    def get_queryset(self):
+        return Game.objects.filter(enabled=True)
 
 
 class GameSessionViewSet(

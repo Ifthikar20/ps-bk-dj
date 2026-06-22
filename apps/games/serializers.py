@@ -1,6 +1,27 @@
 from rest_framework import serializers
 
-from .models import GameSession
+from .models import Game, GameSession
+
+
+class GameSerializer(serializers.ModelSerializer):
+    """Manifest shape consumed by the Flutter RemoteWebGame. Field names go out
+    camelCase via the global renderer, so e.g. cover_colors -> coverColors."""
+
+    class Meta:
+        model = Game
+        fields = (
+            "key",
+            "slug",
+            "name",
+            "description",
+            "icon",
+            "emoji",
+            "cover_colors",
+            "difficulty",
+            "requires",
+            "min_app_version",
+        )
+
 
 # Cap the save-state blob so a client can't stuff the DB via the progress field.
 MAX_PROGRESS_BYTES = 32 * 1024
