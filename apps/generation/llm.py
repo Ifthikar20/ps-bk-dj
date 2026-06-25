@@ -37,9 +37,16 @@ Return a single JSON object with EXACTLY these keys:
 - "title": a short title for the whole set (<= 60 chars).
 - "sections": array of 3-8 objects (split the material by sub-topic), each:
    - "title": a short section heading.
-   - "content": 1-3 short paragraphs that PRESERVE the key definitions and \
-details of this part of the source (readable chunks, NOT a one-line summary).
-   - "example": a "Further understanding" anchor that helps the reader \
+   - "content": the readable notes for this part of the source, PRESERVING \
+the key definitions and details (NOT a one-line summary). Format for easy \
+reading as Markdown: break the material into short "- " bullet points, and \
+use "1. " numbered steps when the content is a sequence/process/ranking. \
+Keep prose paragraphs only for genuinely narrative passages. Prefer many \
+small bullets over dense paragraphs.
+   - "keyTerms": 3-8 of THE most important words/short phrases from this \
+section's content to highlight for the reader (each must appear verbatim in \
+"content"). These are the things a learner must remember.
+   - "example": a "Real-world example" anchor that helps the reader \
 build intuition for the section. Either (a) one concrete, relatable \
 real-world example that shows the section's idea in everyday life, OR \
 (b) a single important key term from the section explained in 1-2 plain \
@@ -60,10 +67,13 @@ not obvious throwaways), "correctIndex" (0-based int), "explanation" \
 "easy" | "medium" | "hard")}}. \
 Easy = direct recall of a fact stated in the section. Medium = a \
 comparison, why, or how question. Hard = apply a rule, theory or \
-principle to a new example, or pick the best inference among close options.
+principle to a new example, or pick the best inference among close options. \
+Include at least ONE question that tests the section's "example"/scenario.
 - "wordGame": array of 4-8 objects covering key terms from the source, \
 each {{"word" (2-12 A-Z letters, no spaces), "clue" (one sentence)}}.
-Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
+Only use facts grounded in the SOURCE TEXT. Output a single JSON object only \
+(no code fences, no commentary). Markdown bullets/numbers are allowed INSIDE \
+the "content" strings; everything else is plain text.
 
 SOURCE TEXT:
 \"\"\"
@@ -101,6 +111,7 @@ _GEMINI_SCHEMA = {
                     "title": {"type": "string"},
                     "content": {"type": "string"},
                     "example": {"type": "string"},
+                    "keyTerms": {"type": "array", "items": {"type": "string"}},
                     "quiz": _QUIZ_SCHEMA,
                 },
                 "required": ["title", "content"],
@@ -179,6 +190,7 @@ def _normalize_keys(raw: dict) -> dict:
                 "title": s.get("title", "") or "Section",
                 "content": s.get("content", "") or "",
                 "example": s.get("example", "") or "",
+                "key_terms": s.get("keyTerms", s.get("key_terms", [])) or [],
                 "quiz": _clean_quiz(s.get("quiz", []), s.get("title", "General") or "General"),
             }
         )

@@ -165,6 +165,7 @@ def generate_study_set(self, study_set_id):
                 "title": sec.title,
                 "content": sec.content,
                 "example": sec.example,
+                "keyTerms": sec.key_terms,
                 "quiz": [
                     {
                         "prompt": q.prompt,

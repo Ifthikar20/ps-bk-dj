@@ -48,7 +48,21 @@ class Section(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     content: str = Field(min_length=1)
     example: str = ""
+    key_terms: List[str] = Field(default_factory=list)
     quiz: List[QuizItem] = Field(default_factory=list)
+
+    @field_validator("key_terms")
+    @classmethod
+    def _clean_terms(cls, v):
+        # De-dupe, drop tiny/blank terms, cap so highlighting stays readable.
+        seen, out = set(), []
+        for t in v or []:
+            t = (t or "").strip()
+            key = t.lower()
+            if len(t) >= 3 and key not in seen:
+                seen.add(key)
+                out.append(t)
+        return out[:10]
 
 
 class GenerationResult(BaseModel):
