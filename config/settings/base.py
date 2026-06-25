@@ -241,11 +241,17 @@ LLM_PROVIDER = config("LLM_PROVIDER", default="anthropic")
 # deepseek-chat is a low-cost model; cap output tokens to keep Q&A generation cheap.
 LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=8192, cast=int)
 LLM_TEMPERATURE = config("LLM_TEMPERATURE", default=0.4, cast=float)
-# Long docs are split into chunks, each its own LLM call. Run up to this many
-# of those (network-bound) calls concurrently to cut generation wall-clock for
-# multi-page uploads. Bounded so we don't hammer the provider's rate limit.
-GENERATION_MAX_PARALLEL_CHUNKS = config(
-    "GENERATION_MAX_PARALLEL_CHUNKS", default=4, cast=int
+# Generation is fanned out into one background task per ~chunk of source text.
+# Those tasks run in parallel across Celery workers (worker concurrency governs
+# how many at once), so first content lands fast and big docs no longer have to
+# finish inside a single task's time limit. This caps how many batches one set
+# may spawn — a guard on cost/queue depth for very large uploads.
+GENERATION_MAX_BATCHES = config("GENERATION_MAX_BATCHES", default=30, cast=int)
+# Upper bound on extracted source text. Anything past this is dropped before
+# chunking. Combined with GENERATION_MAX_BATCHES (~8k chars/batch) this is what
+# bounds the work a single document can create.
+GENERATION_MAX_TEXT_CHARS = config(
+    "GENERATION_MAX_TEXT_CHARS", default=200_000, cast=int
 )
 
 # DeepSeek (OpenAI-compatible API).

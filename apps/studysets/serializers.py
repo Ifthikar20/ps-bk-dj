@@ -48,9 +48,24 @@ class StudySetSerializer(serializers.ModelSerializer):
 
 
 class StudySetStatusSerializer(serializers.ModelSerializer):
+    progress = serializers.SerializerMethodField()
+
     class Meta:
         model = StudySet
-        fields = ("id", "status", "error")
+        fields = (
+            "id",
+            "status",
+            "error",
+            "batches_total",
+            "batches_done",
+            "progress",
+        )
+
+    def get_progress(self, obj):
+        """0.0–1.0 fraction of batches complete (0.0 until fan-out begins)."""
+        if not obj.batches_total:
+            return 0.0
+        return round(obj.batches_done / obj.batches_total, 3)
 
 
 class StudySetCreateSerializer(serializers.Serializer):

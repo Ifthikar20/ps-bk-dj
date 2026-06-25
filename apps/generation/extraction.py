@@ -15,7 +15,10 @@ from apps.common.exceptions import GenerationError
 
 logger = logging.getLogger(__name__)
 
-MAX_TEXT_CHARS = 60_000  # keep prompts (and cost) bounded
+# Upper bound on extracted text. Generation now fans a document out into many
+# background batches (~8k chars each), so we can keep far more of a long PDF
+# than the old single-call limit allowed. Configurable via settings.
+MAX_TEXT_CHARS = getattr(settings, "GENERATION_MAX_TEXT_CHARS", 200_000)
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # cap remote fetches
 FETCH_TIMEOUT = 10  # seconds
 
