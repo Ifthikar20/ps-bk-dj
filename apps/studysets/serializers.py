@@ -58,6 +58,9 @@ class StudySetStatusSerializer(serializers.ModelSerializer):
             "status",
             "error",
             "preview",
+            # Section titles generated so far — lets the app check real AI
+            # sections off live as each batch lands, not just a bare percent.
+            "key_points",
             "batches_total",
             "batches_done",
             "progress",
