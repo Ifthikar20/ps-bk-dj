@@ -1,13 +1,14 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
-from django.db.models import F
 
 from apps.common.exceptions import GenerationError
 from apps.studysets.models import QuizQuestion, StudySet, WordChallenge
-from apps.subscriptions.models import Subscription
+from apps.subscriptions.services import consume_free_credit
 
 from .extraction import _youtube_id, _youtube_title, extract_text
 from .llm import generate
@@ -139,19 +140,30 @@ def generate_study_set(self, study_set_id):
         # justice to its slice instead of producing surface-only questions
         # over the whole document. One chunk -> one call; N chunks -> N calls.
         chunks = _chunk_text(text)
-        results: list[GenerationResult] = []
         usage = {
             "provider": "",
             "model": "",
             "input_tokens": 0,
             "output_tokens": 0,
         }
-        for i, chunk in enumerate(chunks, start=1):
-            logger.info(
-                "Generating chunk %d/%d for StudySet %s (chars=%d)",
-                i, len(chunks), study_set_id, len(chunk),
-            )
-            r, u = generate(chunk)
+        logger.info(
+            "Generating %d chunk(s) for StudySet %s", len(chunks), study_set_id
+        )
+
+        # LLM calls are network-bound, so for multi-chunk docs we run them
+        # concurrently: wall-clock drops from N x latency toward ~1 x latency
+        # instead of waiting on each chunk in turn. ThreadPoolExecutor.map
+        # preserves input order, which _merge_results relies on. A single
+        # chunk skips the pool entirely.
+        if len(chunks) <= 1:
+            pairs = [generate(c) for c in chunks]
+        else:
+            workers = min(settings.GENERATION_MAX_PARALLEL_CHUNKS, len(chunks))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pairs = list(pool.map(generate, chunks))
+
+        results: list[GenerationResult] = []
+        for r, u in pairs:
             results.append(r)
             usage["provider"] = u.get("provider", usage["provider"])
             usage["model"] = u.get("model", usage["model"])
@@ -239,10 +251,9 @@ def generate_study_set(self, study_set_id):
                 ]
             )
 
-            # Consume one free credit only on success.
-            Subscription.objects.filter(user=s.owner, is_premium=False).update(
-                usage_count=F("usage_count") + 1
-            )
+            # Consume one free credit only on success. Counts against the
+            # current monthly window (premium users are exempt).
+            consume_free_credit(s.owner)
 
         # Award creation points server-side, idempotently (one award per set)
         # so it can't be farmed by replaying a client request.

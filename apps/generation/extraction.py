@@ -400,11 +400,34 @@ def _docx_text(blob: bytes) -> str:
     return "\n".join(p.text for p in doc.paragraphs)
 
 
+# Phone photos of notes are often 4000px+ and saved at an EXIF rotation.
+# Tesseract is happiest around the ~2000px / 300dpi range — feeding it the raw
+# image is both slower (more pixels) and less accurate (rotation, low contrast).
+# So we normalise before OCR: honour the camera orientation, downscale very
+# large images, and boost contrast in greyscale. This cuts OCR time and lifts
+# the text we recover from snapshots, which is the app's core "snap your notes"
+# path.
+_OCR_MAX_DIMENSION = 2600
+
+
 def _ocr_text(blob: bytes) -> str:
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageOps
 
-    return pytesseract.image_to_string(Image.open(io.BytesIO(blob)))
+    img = Image.open(io.BytesIO(blob))
+    try:
+        img = ImageOps.exif_transpose(img)  # un-rotate phone photos
+    except Exception:
+        pass
+    img = img.convert("L")  # greyscale — OCR ignores colour anyway
+    longest = max(img.size)
+    if longest > _OCR_MAX_DIMENSION:
+        scale = _OCR_MAX_DIMENSION / longest
+        img = img.resize(
+            (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+        )
+    img = ImageOps.autocontrast(img)  # lift faint pencil / phone-lit text
+    return pytesseract.image_to_string(img)
 
 
 def extract_text(source_kind: str, source_ref: str) -> str:

@@ -241,6 +241,12 @@ LLM_PROVIDER = config("LLM_PROVIDER", default="anthropic")
 # deepseek-chat is a low-cost model; cap output tokens to keep Q&A generation cheap.
 LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=8192, cast=int)
 LLM_TEMPERATURE = config("LLM_TEMPERATURE", default=0.4, cast=float)
+# Long docs are split into chunks, each its own LLM call. Run up to this many
+# of those (network-bound) calls concurrently to cut generation wall-clock for
+# multi-page uploads. Bounded so we don't hammer the provider's rate limit.
+GENERATION_MAX_PARALLEL_CHUNKS = config(
+    "GENERATION_MAX_PARALLEL_CHUNKS", default=4, cast=int
+)
 
 # DeepSeek (OpenAI-compatible API).
 DEEPSEEK_API_KEY = config("DEEPSEEK_API_KEY", default="")
