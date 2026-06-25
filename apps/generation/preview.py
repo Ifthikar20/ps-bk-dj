@@ -34,8 +34,32 @@ def _content_words(text: str) -> list[str]:
     return [w for w in _words(text) if len(w) > 3 and w not in _STOPWORDS]
 
 
+def _looks_heading(line: str) -> bool:
+    """A short, title-like line with no terminal punctuation — e.g. a section
+    heading rather than prose."""
+    return (
+        3 <= len(line) <= 80
+        and len(line.split()) <= 10
+        and line[-1] not in ".!?,:;"
+        and bool(re.search(r"[A-Za-z]", line))
+    )
+
+
 def _sentences(text: str) -> list[str]:
-    flat = re.sub(r"\s+", " ", text).strip()
+    # Headings carry no terminal punctuation, so naive splitting glues them
+    # onto the next sentence ("Title Title is ..."). Give heading-like lines a
+    # full stop first so they stand alone (and then fall out of the summary,
+    # which requires real prose). Only headings are touched, so mid-paragraph
+    # line wraps from PDF extraction are still joined normally.
+    lines: list[str] = []
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        if _looks_heading(s):
+            s += "."
+        lines.append(s)
+    flat = re.sub(r"\s+", " ", " ".join(lines)).strip()
     return [s.strip() for s in _SENTENCE_RE.split(flat) if s.strip()]
 
 
@@ -45,13 +69,7 @@ def _outline(text: str, limit: int = 8) -> list[str]:
     seen: set[str] = set()
     for raw in text.splitlines():
         line = raw.strip()
-        if not (3 <= len(line) <= 80):
-            continue
-        if line[-1] in ".!?,:;":
-            continue
-        if not re.search(r"[A-Za-z]", line):
-            continue
-        if len(line.split()) > 10:
+        if not _looks_heading(line):
             continue
         key = line.lower()
         if key in seen:
