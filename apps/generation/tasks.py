@@ -12,6 +12,7 @@ from apps.subscriptions.services import consume_free_credit
 
 from .extraction import _youtube_id, _youtube_title, extract_text
 from .llm import generate
+from .preview import build_preview
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,10 @@ def generate_study_set(self, study_set_id):
         if total == 0:
             raise GenerationError("Not enough readable content to generate from.")
 
+        # Instant, no-LLM preview from the raw text so the app has something to
+        # show in the first few seconds while the AI batches run.
+        preview = build_preview(text)
+
         # Reset the set for a clean run and record how many batches to expect.
         # Done up front so a mid-flight GET / status poll sees accurate progress.
         with transaction.atomic():
@@ -151,11 +156,12 @@ def generate_study_set(self, study_set_id):
             s.topics = []
             s.summary = ""
             s.error = ""
+            s.preview = preview
             s.batches_total = total
             s.batches_done = 0
             s.save(update_fields=[
                 "status", "sections", "key_points", "topics", "summary",
-                "error", "batches_total", "batches_done",
+                "error", "preview", "batches_total", "batches_done",
             ])
             s.quiz.all().delete()
             s.word_game.all().delete()

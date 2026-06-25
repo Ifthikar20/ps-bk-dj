@@ -34,6 +34,10 @@ class StudySet(UUIDModel):
     topics = models.JSONField(default=list)
     # Sectioned study content: [{title, content, example, quiz:[...]}].
     sections = models.JSONField(default=list)
+    # Instant, no-LLM preview computed from the extracted text at the start of
+    # generation: {wordCount, readingMinutes, outline, keyTerms, summary}.
+    # Lets the app show useful content in the first few seconds.
+    preview = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=12, choices=Status.choices, default=Status.PENDING
     )
