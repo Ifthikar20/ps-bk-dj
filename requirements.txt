@@ -8,11 +8,11 @@ django-cors-headers==4.6.0
 
 # --- Database / cache ---
 psycopg[binary]>=3.2.10,<3.4
-redis==5.2.1
+redis==8.0.1
 hiredis==3.1.0
 
 # --- Async jobs ---
-celery==5.4.0
+celery==5.6.3
 django-celery-results==2.5.1
 
 # --- Storage ---
