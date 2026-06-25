@@ -1,10 +1,10 @@
 # --- Core ---
-Django==5.1.4
-djangorestframework==3.15.2
-djangorestframework-simplejwt==5.3.1
+Django==6.0.6
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
 djangorestframework-camel-case==1.4.2
-django-filter==24.3
-django-cors-headers==4.6.0
+django-filter==25.2
+django-cors-headers==4.9.0
 
 # --- Database / cache ---
 psycopg[binary]>=3.2.10,<3.4
@@ -13,10 +13,10 @@ hiredis==3.1.0
 
 # --- Async jobs ---
 celery==5.4.0
-django-celery-results==2.5.1
+django-celery-results==2.6.0
 
 # --- Storage ---
-django-storages==1.14.4
+django-storages==1.14.6
 boto3==1.35.76
 
 # --- AI + ingestion ---
