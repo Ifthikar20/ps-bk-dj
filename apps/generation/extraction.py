@@ -2,11 +2,13 @@
 import io
 import ipaddress
 import logging
+import re
 import socket
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
+from django.conf import settings
 from django.core.files.storage import default_storage
 
 from apps.common.exceptions import GenerationError
@@ -16,6 +18,17 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_CHARS = 60_000  # keep prompts (and cost) bounded
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # cap remote fetches
 FETCH_TIMEOUT = 10  # seconds
+
+# Fixed allow-list of YouTube hostnames. Anything else gets the regular
+# SSRF guard + download path so we never bypass safety on look-alike hosts.
+_YT_HOSTS = frozenset({
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+})
+_YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 # Content-types we can read as documents (anything else is treated as HTML).
 _DOC_CONTENT_TYPES = {
@@ -84,7 +97,245 @@ def _download(url: str) -> tuple[bytes, str]:
     return bytes(chunks), content_type
 
 
+def _youtube_id(url: str) -> str | None:
+    """Return the 11-char video id if [url] points at YouTube, else None.
+
+    Only accepts hostnames in the fixed allow-list above so a malicious
+    look-alike (e.g. youtube.com.attacker.tld) can never reach the YouTube
+    path — those flow through the regular SSRF-guarded download instead.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    host = parts.hostname.lower()
+    if host not in _YT_HOSTS:
+        return None
+    if host == "youtu.be":
+        candidate = parts.path.lstrip("/").split("/", 1)[0]
+    else:
+        # /watch?v=ID, /shorts/ID, /embed/ID, /v/ID
+        path = parts.path or ""
+        candidate = None
+        for prefix in ("/shorts/", "/embed/", "/v/", "/live/"):
+            if path.startswith(prefix):
+                candidate = path[len(prefix):].split("/", 1)[0]
+                break
+        if candidate is None:
+            qs = parse_qs(parts.query or "")
+            candidate = (qs.get("v") or [None])[0]
+    return candidate if candidate and _YT_ID_RE.match(candidate) else None
+
+
+def _youtube_title(video_id: str) -> str | None:
+    """Resolve a friendly title via YouTube's public oEmbed endpoint.
+
+    Best-effort: returns None on any failure (the caller falls back to a
+    title derived by the LLM from the transcript).
+    """
+    try:
+        resp = requests.get(
+            "https://www.youtube.com/oembed",
+            params={
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "format": "json",
+            },
+            timeout=FETCH_TIMEOUT,
+            headers={"User-Agent": "PlayStudyBot/1.0"},
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        title = (data.get("title") or "").strip()
+        return title[:200] if title else None
+    except Exception as exc:  # network / json / etc — title is optional
+        logger.info("YouTube oembed title lookup failed for %s: %s", video_id, exc)
+        return None
+
+
+def _youtube_text(video_id: str) -> str:
+    """Fetch the transcript for [video_id] via yt-dlp and join to plain text.
+
+    yt-dlp writes the subtitle file to a temp dir using its own session
+    (the caption URLs YouTube returns are session-bound, so naive HTTP
+    GETs of them tend to fail). We then read and parse the file.
+    """
+    try:
+        import yt_dlp
+    except ImportError as exc:
+        raise GenerationError(
+            "YouTube ingest is not configured on this server."
+        ) from exc
+
+    import glob
+    import os
+    import tempfile
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    with tempfile.TemporaryDirectory(prefix="ps-yt-") as tmpdir:
+        opts = {
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            # Accept English first; broaden to any language as a fallback.
+            "subtitleslangs": [
+                "en", "en-US", "en-GB", "en-AU", "en-CA", "en.*",
+                "a.en", "en-orig",
+            ],
+            "subtitlesformat": "vtt/srv3/json3/best",
+            # yt-dlp's default format selector ("bv*+ba/b") can fail
+            # validation on videos lacking a merged format, raising
+            # "Requested format is not available" even with
+            # skip_download=True. Pin to a single-file format that
+            # YouTube always offers so the metadata path completes.
+            "format": "best/bestaudio/worst",
+            "allow_unplayable_formats": True,
+            "ignore_no_formats_error": True,
+            "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": FETCH_TIMEOUT,
+            "retries": 2,
+        }
+        info = None
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
+            msg = str(exc).lower()
+            if "private" in msg or "unavailable" in msg or "removed" in msg:
+                raise GenerationError(
+                    "That YouTube video is unavailable (private, removed, "
+                    "or region-locked)."
+                ) from exc
+            logger.warning("YouTube yt-dlp DownloadError for %s: %s",
+                           video_id, exc)
+            raise GenerationError(
+                "Couldn't read that YouTube video. Try a different link."
+            ) from exc
+        except Exception as exc:
+            logger.warning("YouTube yt-dlp error for %s: %s", video_id, exc)
+            raise GenerationError(
+                "Couldn't read that YouTube video. Try a different link."
+            ) from exc
+
+        # Verbose diagnostics: what tracks did the video actually advertise?
+        if info is not None:
+            sub_langs = sorted((info.get("subtitles") or {}).keys())
+            auto_langs = sorted((info.get("automatic_captions") or {}).keys())
+            logger.info(
+                "YouTube %s captions advertised: manual=%s auto=%s",
+                video_id, sub_langs[:12], auto_langs[:12],
+            )
+        on_disk = sorted(os.listdir(tmpdir))
+        logger.info("YouTube %s tmpdir files: %s", video_id, on_disk)
+
+        # Discover the file yt-dlp actually wrote. Prefer .vtt, then srv*,
+        # then json3, then anything.
+        path = _pick_caption_file(tmpdir, video_id)
+        if path is None:
+            raise GenerationError(
+                "This YouTube video has no English captions. "
+                "Try a different video that has subtitles enabled."
+            )
+        logger.info("YouTube %s using caption file %s",
+                    video_id, os.path.basename(path))
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                body = f.read()
+        except OSError as exc:
+            logger.warning("Reading caption file failed for %s: %s",
+                           video_id, exc)
+            raise GenerationError(
+                "Couldn't load the captions for that YouTube video."
+            ) from exc
+
+    text = _captions_to_text(body)
+    logger.info("YouTube %s parsed transcript: %s chars", video_id, len(text))
+    if not text.strip():
+        raise GenerationError("This YouTube video's captions are empty.")
+    return text
+
+
+def _pick_caption_file(tmpdir: str, video_id: str) -> str | None:
+    """Return the path to the most useful subtitle file yt-dlp wrote.
+
+    yt-dlp names them like '<id>.<lang>.<ext>'. Pick by extension
+    preference, then by language preference.
+    """
+    import glob
+    import os
+
+    files = glob.glob(os.path.join(tmpdir, f"{video_id}.*"))
+    if not files:
+        return None
+    pref_exts = ("vtt", "srv3", "srv2", "srv1", "json3")
+    pref_langs = ("en", "en-US", "en-GB", "en-AU", "en-CA",
+                  "en-orig", "a.en")
+
+    def rank(p: str) -> tuple:
+        name = os.path.basename(p)
+        ext = name.rsplit(".", 1)[-1].lower()
+        mid = name[len(video_id) + 1: -(len(ext) + 1)] or ""
+        ext_rank = pref_exts.index(ext) if ext in pref_exts else len(pref_exts)
+        lang_rank = (pref_langs.index(mid) if mid in pref_langs
+                     else len(pref_langs))
+        return (lang_rank, ext_rank)
+
+    files.sort(key=rank)
+    return files[0]
+
+
+def _captions_to_text(body: str) -> str:
+    """Parse VTT or YouTube srv3/json3 caption body into plain text.
+
+    Strips timestamps, cue settings, and noise markers like [Music].
+    """
+    body = (body or "").strip()
+    if not body:
+        return ""
+    # JSON3 (yt-dlp's preferred fallback when VTT is unavailable).
+    if body.startswith("{"):
+        try:
+            import json
+            data = json.loads(body)
+            parts = []
+            for event in data.get("events") or []:
+                for seg in event.get("segs") or []:
+                    s = (seg.get("utf8") or "").strip()
+                    if s and s not in ("[Music]", "[Applause]"):
+                        parts.append(s)
+            return " ".join(parts)
+        except Exception:
+            return ""
+    # VTT (default).
+    lines = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("WEBVTT") or line.startswith("Kind:") or \
+                line.startswith("Language:") or line.startswith("NOTE"):
+            continue
+        if "-->" in line:  # timing line
+            continue
+        if line.isdigit():  # cue index
+            continue
+        # Strip inline tags like <c.colorE5E5E5> and <00:00:01.234>
+        line = re.sub(r"<[^>]+>", "", line)
+        if line in ("[Music]", "[Applause]"):
+            continue
+        lines.append(line)
+    return " ".join(lines)
+
+
 def extract_from_link(url: str) -> str:
+    # YouTube path runs before the SSRF guard / download, because the public
+    # YouTube API does the network for us. We still re-validate the host
+    # against a fixed allow-list inside _youtube_id().
+    if getattr(settings, "ENABLE_YOUTUBE_INGEST", True):
+        if (video_id := _youtube_id(url)):
+            return _truncate(_youtube_text(video_id))
+
     _assert_public_url(url)
     blob, content_type = _download(url)
 

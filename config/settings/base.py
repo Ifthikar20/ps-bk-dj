@@ -45,12 +45,15 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
+    "apps.common.apps.CommonConfig",
     "apps.accounts",
     "apps.studysets",
     "apps.generation",
     "apps.rewards",
     "apps.subscriptions",
     "apps.examprep",
+    "apps.family",
+    "apps.games",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -98,6 +101,16 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+
+# SQLite serializes writes via a file lock; with the background generation
+# thread + heartbeats every 15s + rewards writes it is easy to hit
+# "database is locked". The real PRAGMA setup happens in
+# apps.common.apps.CommonConfig.ready() via a connection_created signal
+# because Django's SQLite init_command only runs a single statement and
+# silently drops the second PRAGMA in a "; "-joined string.
+if DATABASES["default"].get("ENGINE", "").endswith("sqlite3"):
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"]["timeout"] = 30
 
 # --------------------------------------------------------------------------- #
 # Cache / Celery / Redis
@@ -197,6 +210,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Where game bundles are served from (CDN/S3 origin). Used by publish_game to
+# verify a bundle exists before enabling its catalog row. Keep in sync with the
+# app's --dart-define=GAMES_BASE_URL.
+GAMES_BASE_URL = config("GAMES_BASE_URL", default="")
+
 AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME", default="")
 AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="")
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default="")
@@ -219,9 +237,9 @@ if AWS_STORAGE_BUCKET_NAME:
 # --- LLM provider (pluggable) ---
 # AI keys live only here, never in the app.
 # Options: "deepseek" | "local" | "gemini"
-LLM_PROVIDER = config("LLM_PROVIDER", default="deepseek")
+LLM_PROVIDER = config("LLM_PROVIDER", default="anthropic")
 # deepseek-chat is a low-cost model; cap output tokens to keep Q&A generation cheap.
-LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=2048, cast=int)
+LLM_MAX_OUTPUT_TOKENS = config("LLM_MAX_OUTPUT_TOKENS", default=8192, cast=int)
 LLM_TEMPERATURE = config("LLM_TEMPERATURE", default=0.4, cast=float)
 
 # DeepSeek (OpenAI-compatible API).
@@ -244,6 +262,14 @@ ANTHROPIC_MODEL = config("ANTHROPIC_MODEL", default="claude-haiku-4-5")
 
 # Free-tier generation limit — MUST equal SubscriptionBloc.freeLimit in the app.
 FREE_GENERATION_LIMIT = config("FREE_GENERATION_LIMIT", default=2, cast=int)
+
+# YouTube transcript ingest. When True, link URLs whose hostname is in the
+# fixed YouTube allow-list are read via youtube-transcript-api instead of
+# the standard SSRF-guarded download. Set to False to disable instantly if
+# YouTube's transcript endpoint changes or starts blocking us.
+ENABLE_YOUTUBE_INGEST = config(
+    "ENABLE_YOUTUBE_INGEST", default=True, cast=bool
+)
 
 # Upload guards
 MAX_UPLOAD_BYTES = config("MAX_UPLOAD_BYTES", default=20 * 1024 * 1024, cast=int)

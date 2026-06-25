@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>Quiz Rush</title>
+    <style>
+      :root {
+        --bg1: #6b5ce7;
+        --bg2: #1f1b2e;
+        --accent: #d6f26c;
+        --good: #22c55e;
+        --bad: #ef4444;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color: #fff;
+        background: linear-gradient(160deg, var(--bg1), var(--bg2));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        user-select: none;
+      }
+      #app { width: 100%; max-width: 560px; padding: 20px; }
+      .topbar {
+        display: flex; justify-content: space-between; align-items: center;
+        font-weight: 700; margin-bottom: 14px;
+      }
+      .pill {
+        background: rgba(255, 255, 255, 0.14);
+        padding: 6px 12px; border-radius: 999px; font-size: 14px;
+      }
+      .timer-track {
+        height: 6px; background: rgba(255, 255, 255, 0.15);
+        border-radius: 999px; overflow: hidden; margin-bottom: 22px;
+      }
+      .timer-fill {
+        height: 100%; width: 100%; background: var(--accent);
+        transition: width 0.1s linear;
+      }
+      .prompt {
+        font-size: 22px; font-weight: 700; line-height: 1.3;
+        min-height: 84px; margin-bottom: 20px;
+      }
+      .choices { display: grid; gap: 12px; }
+      .choice {
+        background: rgba(255, 255, 255, 0.1);
+        border: 2px solid transparent; border-radius: 14px;
+        padding: 16px; font-size: 16px; color: #fff; text-align: left;
+        cursor: pointer; transition: transform 0.05s, background 0.15s;
+      }
+      .choice:active { transform: scale(0.99); }
+      .choice.good { background: var(--good); border-color: #fff; }
+      .choice.bad { background: var(--bad); border-color: #fff; }
+      .center { text-align: center; }
+      .big { font-size: 40px; font-weight: 800; margin: 8px 0; }
+      .btn {
+        margin-top: 18px; background: var(--accent); color: #1f1b2e;
+        border: none; border-radius: 14px; padding: 14px 22px;
+        font-size: 16px; font-weight: 800; cursor: pointer;
+      }
+      .muted { opacity: 0.7; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="app" class="center">
+      <div class="big">Quiz Rush</div>
+      <div class="muted">Loading questions…</div>
+    </div>
+
+    <!-- At games/quiz-rush/<version>/, so the SDK (host root) is three levels up. -->
+    <script src="../../../playstudy-sdk.js"></script>
+    <script>
+      (function () {
+        "use strict";
+        var SECONDS_PER_Q = 12;
+        var app = document.getElementById("app");
+
+        var quiz = [];
+        var idx = 0;
+        var score = 0;
+        var streak = 0;
+        var timer = null;
+        var locked = false;
+
+        PlayStudyGame.onInit(function (material) {
+          quiz = (material.quiz || []).filter(function (q) {
+            return q && q.prompt && Array.isArray(q.choices);
+          });
+          if (!quiz.length) return showEmpty();
+          idx = 0; score = 0; streak = 0;
+          renderQuestion();
+        });
+
+        function showEmpty() {
+          app.innerHTML =
+            '<div class="big">Quiz Rush</div>' +
+            '<div class="muted">This study set has no quiz questions yet.</div>';
+        }
+
+        function renderQuestion() {
+          locked = false;
+          var q = quiz[idx];
+          var html =
+            '<div class="topbar">' +
+            '<span class="pill">Q ' + (idx + 1) + " / " + quiz.length + "</span>" +
+            '<span class="pill">⭐ ' + score + "</span>" +
+            "</div>" +
+            '<div class="timer-track"><div class="timer-fill" id="tfill"></div></div>' +
+            '<div class="prompt">' + escapeHtml(q.prompt) + "</div>" +
+            '<div class="choices" id="choices"></div>';
+          app.className = "";
+          app.innerHTML = html;
+
+          var box = document.getElementById("choices");
+          q.choices.forEach(function (choice, i) {
+            var b = document.createElement("button");
+            b.className = "choice";
+            b.textContent = choice;
+            b.onclick = function () { answer(i, b); };
+            box.appendChild(b);
+          });
+
+          startTimer();
+        }
+
+        function startTimer() {
+          var fill = document.getElementById("tfill");
+          var remaining = SECONDS_PER_Q;
+          clearInterval(timer);
+          timer = setInterval(function () {
+            remaining -= 0.1;
+            var pct = Math.max(0, (remaining / SECONDS_PER_Q) * 100);
+            if (fill) fill.style.width = pct + "%";
+            if (remaining <= 0) {
+              clearInterval(timer);
+              answer(-1, null); // time's up = wrong
+            }
+          }, 100);
+        }
+
+        function answer(choiceIdx, btn) {
+          if (locked) return;
+          locked = true;
+          clearInterval(timer);
+
+          var q = quiz[idx];
+          var correct = q.correctIndex;
+          var isCorrect = choiceIdx === correct;
+
+          var buttons = document.querySelectorAll(".choice");
+          if (buttons[correct]) buttons[correct].classList.add("good");
+          if (!isCorrect && btn) btn.classList.add("bad");
+
+          if (isCorrect) {
+            score += 10;
+            streak += 1;
+            PlayStudyGame.score(score);
+            // Reward every 3-in-a-row (server caps/validates the points).
+            if (streak % 3 === 0) PlayStudyGame.reward("Finished a quiz");
+          } else {
+            streak = 0;
+          }
+
+          // Save-state so a resumed play could pick up here.
+          PlayStudyGame.progress({ index: idx + 1, score: score });
+
+          setTimeout(next, 850);
+        }
+
+        function next() {
+          idx += 1;
+          if (idx >= quiz.length) return finish();
+          renderQuestion();
+        }
+
+        function finish() {
+          app.className = "center";
+          app.innerHTML =
+            '<div class="muted">Final score</div>' +
+            '<div class="big">' + score + "</div>" +
+            '<div class="muted">' + quiz.length + " questions</div>" +
+            '<button class="btn" id="again">Play again</button>';
+          document.getElementById("again").onclick = function () {
+            idx = 0; score = 0; streak = 0;
+            renderQuestion();
+          };
+          PlayStudyGame.gameover(score);
+        }
+
+        function escapeHtml(s) {
+          return String(s).replace(/[&<>"']/g, function (c) {
+            return {
+              "&": "&amp;", "<": "&lt;", ">": "&gt;",
+              '"': "&quot;", "'": "&#39;",
+            }[c];
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

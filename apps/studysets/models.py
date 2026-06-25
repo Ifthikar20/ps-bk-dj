@@ -29,6 +29,8 @@ class StudySet(UUIDModel):
     summary = models.TextField(blank=True, default="")
     key_points = models.JSONField(default=list)
     topics = models.JSONField(default=list)
+    # Sectioned study content: [{title, content, example, quiz:[...]}].
+    sections = models.JSONField(default=list)
     status = models.CharField(
         max_length=12, choices=Status.choices, default=Status.PENDING
     )
@@ -58,6 +60,11 @@ class StudySet(UUIDModel):
 
 
 class QuizQuestion(UUIDModel):
+    class Difficulty(models.TextChoices):
+        EASY = "easy", "Easy"
+        MEDIUM = "medium", "Medium"
+        HARD = "hard", "Hard"
+
     study_set = models.ForeignKey(
         StudySet, on_delete=models.CASCADE, related_name="quiz"
     )
@@ -66,6 +73,9 @@ class QuizQuestion(UUIDModel):
     correct_index = models.PositiveSmallIntegerField()
     explanation = models.TextField(null=True, blank=True)
     topic = models.CharField(max_length=120, default="General")
+    difficulty = models.CharField(
+        max_length=8, choices=Difficulty.choices, default=Difficulty.MEDIUM
+    )
     order = models.PositiveIntegerField(default=0)
 
     class Meta:

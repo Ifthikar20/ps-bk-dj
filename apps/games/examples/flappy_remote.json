@@ -1,0 +1,20 @@
+{
+  "key": "flappy_remote",
+  "slug": "flappy",
+  "version": "1",
+  "name": "Flappy Quiz",
+  "description": "Tap to fly through the gaps \u2014 answer a question to revive.",
+  "icon": "flutter_dash",
+  "emoji": "\ud83d\udc24",
+  "coverColors": [
+    "0xFFFBC78A",
+    "0xFFEF4444"
+  ],
+  "difficulty": "medium",
+  "requires": {
+    "quiz": 1
+  },
+  "minAppVersion": "",
+  "enabled": true,
+  "sortOrder": 10
+}

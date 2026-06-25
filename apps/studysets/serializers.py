@@ -6,7 +6,15 @@ from .models import QuizQuestion, StudySet, WordChallenge
 class QuizQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuizQuestion
-        fields = ("id", "prompt", "choices", "correct_index", "explanation", "topic")
+        fields = (
+            "id",
+            "prompt",
+            "choices",
+            "correct_index",
+            "explanation",
+            "topic",
+            "difficulty",
+        )
 
 
 class WordChallengeSerializer(serializers.ModelSerializer):
@@ -31,6 +39,7 @@ class StudySetSerializer(serializers.ModelSerializer):
             "summary",
             "key_points",
             "topics",
+            "sections",
             "quiz",
             "word_game",
             "status",
@@ -56,12 +65,25 @@ class StudySetCreateSerializer(serializers.Serializer):
         ref = attrs["source_ref"].strip()
         if not ref:
             raise serializers.ValidationError({"source_ref": "This field is required."})
-        if kind == StudySet.SourceKind.LINK and not ref.lower().startswith(
-            ("http://", "https://")
-        ):
-            raise serializers.ValidationError(
-                {"source_ref": "A valid http(s) URL is required for link sources."}
-            )
+        if kind == StudySet.SourceKind.LINK:
+            # Recover from paste artifacts where the URL is duplicated, either
+            # cleanly (foo.pdf + foo.pdf) or with overlap that drops the
+            # extension (foo. + foo.pdf). The complete URL is always the last
+            # one, so keep everything from the last scheme onward.
+            lower = ref.lower()
+            last = max(lower.rfind("http://"), lower.rfind("https://"))
+            if last > 0:
+                ref = ref[last:]
+            # Forgive a missing scheme on a bare hostname like
+            # "files.eric.ed.gov/x.pdf" — assume https.
+            if not ref.lower().startswith(("http://", "https://")):
+                bare = ref.split("/", 1)[0]
+                if "." in bare and " " not in bare and bare[0].isalnum():
+                    ref = "https://" + ref
+            if not ref.lower().startswith(("http://", "https://")):
+                raise serializers.ValidationError(
+                    {"source_ref": "A valid http(s) URL is required for link sources."}
+                )
         if kind == StudySet.SourceKind.TEXT and len(ref) < 20:
             raise serializers.ValidationError(
                 {"source_ref": "Pasted text must be at least 20 characters."}

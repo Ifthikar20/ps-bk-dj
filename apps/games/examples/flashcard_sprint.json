@@ -1,0 +1,20 @@
+{
+  "key": "flashcard_sprint",
+  "slug": "flashcard-sprint",
+  "version": "1",
+  "name": "Flashcard Sprint",
+  "description": "See the clue, recall the word, then grade yourself. Beat your best.",
+  "icon": "auto_awesome",
+  "emoji": "\ud83c\udccf",
+  "coverColors": [
+    "0xFF6B5CE7",
+    "0xFF1F1B2E"
+  ],
+  "difficulty": "easy",
+  "requires": {
+    "words": 1
+  },
+  "minAppVersion": "",
+  "enabled": true,
+  "sortOrder": 8
+}

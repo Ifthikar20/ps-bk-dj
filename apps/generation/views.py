@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db.models import Count, Sum
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +10,37 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.exceptions import DomainError
+
+from .models import TokenUsage
+
+
+class TokenUsageView(APIView):
+    """Per-user token consumption: totals plus a per-model breakdown."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = TokenUsage.objects.filter(user=request.user)
+        totals = qs.aggregate(
+            input=Sum("input_tokens"),
+            output=Sum("output_tokens"),
+            total=Sum("total_tokens"),
+            calls=Count("id"),
+        )
+        by_model = list(
+            qs.values("provider", "model")
+            .annotate(total=Sum("total_tokens"), calls=Count("id"))
+            .order_by("-total")
+        )
+        return Response(
+            {
+                "totalInputTokens": totals["input"] or 0,
+                "totalOutputTokens": totals["output"] or 0,
+                "totalTokens": totals["total"] or 0,
+                "calls": totals["calls"] or 0,
+                "byModel": by_model,
+            }
+        )
 
 
 class UploadView(APIView):

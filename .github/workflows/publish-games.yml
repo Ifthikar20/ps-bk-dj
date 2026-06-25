@@ -1,0 +1,63 @@
+name: Publish games
+
+# Publishes game bundles to S3 and upserts the manifest. Runs when game assets
+# or manifests change on the default branch, or on manual dispatch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "games_host/**"
+      - "apps/games/examples/**"
+  workflow_dispatch:
+    inputs:
+      manifests:
+        description: "Manifest paths to publish (default: all examples; 'none' = assets only)"
+        required: false
+        default: ""
+
+concurrency:
+  group: publish-games
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # for AWS OIDC (no long-lived keys)
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      # Auth to AWS via an OIDC role (configure AWS_ROLE_ARN in repo secrets).
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publish
+        env:
+          GAMES_BUCKET: ${{ vars.GAMES_BUCKET }}
+          CLOUDFRONT_DIST_ID: ${{ vars.CLOUDFRONT_DIST_ID }}
+          GAMES_BASE_URL: ${{ vars.GAMES_BASE_URL }}
+          # DB the manifest rows are written to. If the DB isn't reachable from
+          # the runner, set PUBLISH_MANIFESTS=none here and run publish_game as
+          # part of your backend deploy instead.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          PUBLISH_MANIFESTS: ${{ github.event.inputs.manifests }}
+        run: ./games_host/deploy.sh

@@ -10,6 +10,13 @@ class QuizItem(BaseModel):
     correct_index: int = Field(ge=0)
     explanation: str = ""
     topic: str = "General"
+    difficulty: str = "medium"
+
+    @field_validator("difficulty")
+    @classmethod
+    def _check_difficulty(cls, v):
+        v = (v or "medium").lower().strip()
+        return v if v in ("easy", "medium", "hard") else "medium"
 
     @field_validator("choices")
     @classmethod
@@ -37,10 +44,28 @@ class WordItem(BaseModel):
         return cleaned
 
 
+class Section(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    content: str = Field(min_length=1)
+    example: str = ""
+    key_terms: List[str] = Field(default_factory=list)
+    quiz: List[QuizItem] = Field(default_factory=list)
+
+    @field_validator("key_terms")
+    @classmethod
+    def _clean_terms(cls, v):
+        # De-dupe, drop tiny/blank terms, cap so highlighting stays readable.
+        seen, out = set(), []
+        for t in v or []:
+            t = (t or "").strip()
+            key = t.lower()
+            if len(t) >= 3 and key not in seen:
+                seen.add(key)
+                out.append(t)
+        return out[:10]
+
+
 class GenerationResult(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    summary: str = Field(min_length=1)
-    key_points: List[str] = Field(default_factory=list)
-    topics: List[str] = Field(default_factory=list)
-    quiz: List[QuizItem] = Field(min_length=1)
+    sections: List[Section] = Field(min_length=1)
     word_game: List[WordItem] = Field(default_factory=list)
