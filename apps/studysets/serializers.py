@@ -74,6 +74,12 @@ class StudySetCreateSerializer(serializers.Serializer):
             last = max(lower.rfind("http://"), lower.rfind("https://"))
             if last > 0:
                 ref = ref[last:]
+            # Forgive a missing scheme on a bare hostname like
+            # "files.eric.ed.gov/x.pdf" — assume https.
+            if not ref.lower().startswith(("http://", "https://")):
+                bare = ref.split("/", 1)[0]
+                if "." in bare and " " not in bare and bare[0].isalnum():
+                    ref = "https://" + ref
             if not ref.lower().startswith(("http://", "https://")):
                 raise serializers.ValidationError(
                     {"source_ref": "A valid http(s) URL is required for link sources."}

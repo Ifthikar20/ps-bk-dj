@@ -1,5 +1,9 @@
 # Deployment & publishing
 
+> **For the current, real, deployed AWS state — what exists, IDs, costs,
+> security posture, operator commands, gaps, roadmap — see [`INFRASTRUCTURE.md`](./INFRASTRUCTURE.md).**
+> This doc describes the *intended* deploy/publish workflow at the design level.
+
 Three things deploy independently. Only the first two are "real" deploys; new
 games are just data + assets.
 

@@ -27,9 +27,15 @@ _PROMPT = """Turn the SOURCE TEXT into a study guide. Do NOT over-summarise: kee
 the real definitions, details and nuance — reorganise the material into readable \
 sections and only shorten wordy passages so each section is easy to read.
 
+COVERAGE IS THE PRIMARY GOAL. Every meaningful fact, definition, mechanism, \
+date, name, formula, framework, or rule that appears in the SOURCE TEXT must be \
+testable from your output. Do NOT cherry-pick "the most obvious" facts and \
+ignore the rest. If the source has a list, table, or enumeration, EACH item \
+in it deserves dedicated coverage. Aim wide; depth comes from the difficulty mix.
+
 Return a single JSON object with EXACTLY these keys:
 - "title": a short title for the whole set (<= 60 chars).
-- "sections": array of 2-6 objects (split the material by sub-topic), each:
+- "sections": array of 3-8 objects (split the material by sub-topic), each:
    - "title": a short section heading.
    - "content": 1-3 short paragraphs that PRESERVE the key definitions and \
 details of this part of the source (readable chunks, NOT a one-line summary).
@@ -40,23 +46,23 @@ real-world example that shows the section's idea in everyday life, OR \
 sentences with a tiny illustrative analogy. Pick whichever is more useful \
 for THIS section. Start the sentence with the example/analogy directly — \
 no preamble like "For example" or "In other words".
-   - "quiz": MIX of difficulties for THIS section only — scaled to its \
-content. A short section: 4-6 items. A medium section: 6-8 items. A long \
-or dense section: 8-12 items. Use ALL the section's important facts — do \
-NOT artificially cap the quiz at 3 questions. The mix should weight \
-toward medium with some easy and at least one hard per section. If the \
-section involves a specific rule, law, theory, formula, framework or \
-named principle, INCLUDE at least one (preferably two) "hard" challenge \
-questions that ask the learner to APPLY the rule to a new scenario (not \
-just recall it). Each: {{"prompt", "choices" (4 strings, plausible \
-distractors not obvious throwaways), "correctIndex" (0-based int), \
-"explanation" (one sentence WHY the correct answer is right), "difficulty" \
-(one of "easy" | "medium" | "hard")}}. \
+   - "quiz": as many items as it takes to cover EVERY important fact in \
+this section. There is NO upper cap and NO fixed "3-per-difficulty" rule. \
+Floor by section length: short (<300 chars) -> 5+ items, medium (300-900 \
+chars) -> 8+, long/dense (900+ chars) -> 12+. Distribute across \
+difficulties roughly 30% easy / 50% medium / 20% hard — but generate as \
+many of EACH difficulty as the content supports, not a fixed quota. If \
+the section involves a specific rule, law, theory, formula, framework or \
+named principle, INCLUDE at least two "hard" application questions for \
+it. Each item: {{"prompt", "choices" (4 strings, plausible distractors \
+not obvious throwaways), "correctIndex" (0-based int), "explanation" \
+(one sentence WHY the correct answer is right), "difficulty" (one of \
+"easy" | "medium" | "hard")}}. \
 Easy = direct recall of a fact stated in the section. Medium = a \
-comparison or why/how question. Hard = apply a rule, theory or principle \
-to a new example, or pick the best inference among close options.
-- "wordGame": array of 3-6 objects, each {{"word" (2-12 A-Z letters, no spaces), \
-"clue" (one sentence)}}.
+comparison, why, or how question. Hard = apply a rule, theory or \
+principle to a new example, or pick the best inference among close options.
+- "wordGame": array of 4-8 objects covering key terms from the source, \
+each {{"word" (2-12 A-Z letters, no spaces), "clue" (one sentence)}}.
 Only use facts grounded in the SOURCE TEXT. Output JSON only, no prose, no markdown.
 
 SOURCE TEXT:

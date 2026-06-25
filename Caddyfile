@@ -1,0 +1,63 @@
+{
+	# auto-HTTPS disabled — we're serving on a raw IP for now.
+	# To enable real HTTPS without a domain: set API_DOMAIN=100-55-196-80.sslip.io
+	# in .env.prod and replace this whole block + the :80 below per the comment
+	# at the bottom of this file. sslip.io is a free DNS service that resolves
+	# every <ip-with-dashes>.sslip.io to that IP — letsencrypt-issuable, real
+	# trusted cert, zero DNS records to manage.
+	auto_https off
+	# email {$CADDY_EMAIL}
+
+	# Don't leak the reverse proxy software version.
+	servers {
+		metrics
+	}
+}
+
+# ----- Site block: serves the API. ----- #
+:80 {
+	encode zstd gzip
+
+	# Security headers (HTTPS-only ones like HSTS only flip on once we have TLS).
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		# Remove version info leaks
+		-Server
+		-X-Powered-By
+	}
+
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+	}
+
+	handle_path /media/* {
+		root * /srv/media
+		file_server
+	}
+
+	reverse_proxy web:8000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ----- When you flip to HTTPS, swap the block above for one of these: ----- #
+#
+# (a) Free real TLS via sslip.io — works on any public IP, no domain needed:
+#     remove `auto_https off`, uncomment `email`, replace `:80 {` with:
+#         100-55-196-80.sslip.io {
+#     Caddy will fetch a Let's Encrypt cert automatically.
+#
+# (b) Your own domain (e.g. api.playstudy.ai):
+#     remove `auto_https off`, uncomment `email`, replace `:80 {` with:
+#         {$API_DOMAIN} {
+#     Set API_DOMAIN=api.playstudy.ai in .env.prod.

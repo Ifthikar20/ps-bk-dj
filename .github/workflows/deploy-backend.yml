@@ -1,0 +1,61 @@
+name: Deploy backend
+
+# Auto-deploys main to the single EC2 box. SSHes in and runs deploy.sh
+# (which: git pull, build image, migrate, collectstatic, restart compose).
+#
+# Required GitHub repo secrets:
+#   SSH_PRIVATE_KEY   — private key matching ~/.ssh/authorized_keys on the box
+#   EC2_HOST          — EC2 public IP or hostname (e.g. 100.55.196.80)
+# Optional secrets:
+#   EC2_USER          — default 'ubuntu'
+#   EC2_SSH_PORT      — default 22
+#   EC2_HOST_KEY      — server's host key for strict checking; if unset we
+#                       disable host-key verification (acceptable for a single
+#                       fixed EIP, less so for fleet).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "games_host/**"
+      - "apps/games/examples/**"
+      - ".github/workflows/publish-games.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Install SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_HOST_KEY: ${{ secrets.EC2_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$EC2_HOST_KEY" ]; then
+            printf '%s\n' "$EC2_HOST_KEY" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          fi
+
+      - name: Deploy over SSH
+        env:
+          EC2_USER: ${{ secrets.EC2_USER || 'ubuntu' }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT || '22' }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new \
+              -p "$EC2_SSH_PORT" \
+              "$EC2_USER@$EC2_HOST" \
+              'cd /opt/playstudy/ps-bk-dj && bash deploy/deploy.sh'
