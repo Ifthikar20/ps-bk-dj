@@ -2,16 +2,17 @@ import logging
 import time
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import Max
 
 from apps.common.exceptions import GenerationError
 from apps.studysets.models import QuizQuestion, StudySet, WordChallenge
-from apps.subscriptions.models import Subscription
+from apps.subscriptions.services import consume_free_credit
 
 from .extraction import _youtube_id, _youtube_title, extract_text
 from .llm import generate
-from .schemas import GenerationResult, Section
+from .preview import build_preview
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 # LLM_MAX_OUTPUT_TOKENS cap. Input-to-output ratio is ~3x in practice, so
 # 8000 input chars maps to roughly 24000 output chars (~6000 tokens).
 _CHUNK_CHARS = 8_000
+
+# Cap how many word-game entries a set keeps across all batches combined.
+_MAX_WORDS = 10
 
 
 def _derive_title(source_kind, source_ref):
@@ -75,48 +79,42 @@ def _chunk_text(text: str, chunk_chars: int = _CHUNK_CHARS) -> list[str]:
     return out
 
 
-def _merge_results(results: list[GenerationResult]) -> GenerationResult:
-    """Combine per-chunk GenerationResults into one, deduping quiz items by
-    prompt prefix and word-game entries by word."""
-    if not results:
-        raise GenerationError("LLM produced no usable output.")
-    if len(results) == 1:
-        return results[0]
-
-    title = results[0].title
-    all_sections: list[Section] = []
-    seen_prompts: set[str] = set()
-    for r in results:
-        for sec in r.sections:
-            dedup_quiz = []
-            for q in sec.quiz:
-                key = q.prompt.strip().lower()[:80]
-                if key in seen_prompts:
-                    continue
-                seen_prompts.add(key)
-                dedup_quiz.append(q)
-            sec.quiz = dedup_quiz
-            all_sections.append(sec)
-
-    seen_words: set[str] = set()
-    all_words = []
-    for r in results:
-        for w in r.word_game:
-            if w.word in seen_words:
-                continue
-            seen_words.add(w.word)
-            all_words.append(w)
-
-    return GenerationResult(
-        title=title,
-        sections=all_sections,
-        word_game=all_words[:10],
-    )
+def _sections_to_json(sections) -> list[dict]:
+    """Serialize the schema Sections of one batch into the StudySet.sections
+    JSON shape (camelCase, matching what the app already reads)."""
+    return [
+        {
+            "title": sec.title,
+            "content": sec.content,
+            "example": sec.example,
+            "keyTerms": sec.key_terms,
+            "quiz": [
+                {
+                    "prompt": q.prompt,
+                    "choices": q.choices,
+                    "correctIndex": q.correct_index,
+                    "explanation": q.explanation,
+                    "topic": q.topic,
+                    "difficulty": q.difficulty,
+                }
+                for q in sec.quiz
+            ],
+        }
+        for sec in sections
+    ]
 
 
+# --------------------------------------------------------------------------- #
+# Orchestrator: prepare the document, then fan out one task per batch.
+# --------------------------------------------------------------------------- #
 @shared_task(bind=True, max_retries=2, default_retry_delay=10)
 def generate_study_set(self, study_set_id):
-    started = time.monotonic()
+    """Extract + chunk the source, then fan out a `process_batch` task per
+    chunk. Each batch runs in its OWN task (its own time budget) and persists
+    its slice the moment it finishes, so the set turns PARTIAL and becomes
+    readable long before the final batch lands — instead of one mega-task that
+    had to finish every chunk inside a single 120s window.
+    """
     try:
         study_set = StudySet.objects.get(id=study_set_id)
     except StudySet.DoesNotExist:
@@ -126,150 +124,65 @@ def generate_study_set(self, study_set_id):
     if study_set.status == StudySet.Status.READY:
         return  # idempotent — already done
 
-    StudySet.objects.filter(id=study_set_id).update(
-        status=StudySet.Status.PROCESSING
-    )
-
     try:
         text = extract_text(study_set.source_kind, study_set.source_ref)
         if len(text) < 50:
             raise GenerationError("Not enough readable content to generate from.")
 
-        # Long docs are split into ~12k-char chunks so each LLM pass can do
-        # justice to its slice instead of producing surface-only questions
-        # over the whole document. One chunk -> one call; N chunks -> N calls.
         chunks = _chunk_text(text)
-        results: list[GenerationResult] = []
-        usage = {
-            "provider": "",
-            "model": "",
-            "input_tokens": 0,
-            "output_tokens": 0,
-        }
-        for i, chunk in enumerate(chunks, start=1):
-            logger.info(
-                "Generating chunk %d/%d for StudySet %s (chars=%d)",
-                i, len(chunks), study_set_id, len(chunk),
+        max_batches = settings.GENERATION_MAX_BATCHES
+        if len(chunks) > max_batches:
+            logger.warning(
+                "StudySet %s: %d chunks exceeds GENERATION_MAX_BATCHES=%d; "
+                "processing the first %d.",
+                study_set_id, len(chunks), max_batches, max_batches,
             )
-            r, u = generate(chunk)
-            results.append(r)
-            usage["provider"] = u.get("provider", usage["provider"])
-            usage["model"] = u.get("model", usage["model"])
-            usage["input_tokens"] += u.get("input_tokens", 0)
-            usage["output_tokens"] += u.get("output_tokens", 0)
-        result = _merge_results(results)
+            chunks = chunks[:max_batches]
+        total = len(chunks)
+        if total == 0:
+            raise GenerationError("Not enough readable content to generate from.")
 
-        # Flatten sections for the legacy/flat fields + build the sections JSON.
-        sections_json = [
-            {
-                "title": sec.title,
-                "content": sec.content,
-                "example": sec.example,
-                "keyTerms": sec.key_terms,
-                "quiz": [
-                    {
-                        "prompt": q.prompt,
-                        "choices": q.choices,
-                        "correctIndex": q.correct_index,
-                        "explanation": q.explanation,
-                        "topic": q.topic,
-                        "difficulty": q.difficulty,
-                    }
-                    for q in sec.quiz
-                ],
-            }
-            for sec in result.sections
-        ]
-        all_quiz = [q for sec in result.sections for q in sec.quiz]
-        section_titles = [sec.title for sec in result.sections]
-        # Short preview for the library card (first section, trimmed).
-        summary_preview = (result.sections[0].content[:280] if result.sections else "")
+        # Instant, no-LLM preview from the raw text so the app has something to
+        # show in the first few seconds while the AI batches run.
+        preview = build_preview(text)
 
-        # Track token spend for this user (best-effort; never fail generation).
-        try:
-            from .models import TokenUsage
-
-            TokenUsage.objects.create(
-                user=study_set.owner,
-                study_set=study_set,
-                provider=usage.get("provider", ""),
-                model=usage.get("model", ""),
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
-            )
-        except Exception:  # usage logging must never break generation
-            logger.warning("Failed to record token usage for %s", study_set_id)
-
+        # Reset the set for a clean run and record how many batches to expect.
+        # Done up front so a mid-flight GET / status poll sees accurate progress.
         with transaction.atomic():
             s = StudySet.objects.select_for_update().get(id=study_set_id)
-            s.sections = sections_json
-            s.summary = summary_preview
-            s.key_points = section_titles
-            s.topics = section_titles
-            s.title = s.title or result.title or _derive_title(
-                s.source_kind, s.source_ref
-            )
-            s.status = StudySet.Status.READY
+            s.status = StudySet.Status.PROCESSING
+            s.sections = []
+            s.key_points = []
+            s.topics = []
+            s.summary = ""
             s.error = ""
-            s.save()
-
+            s.preview = preview
+            s.batches_total = total
+            s.batches_done = 0
+            s.save(update_fields=[
+                "status", "sections", "key_points", "topics", "summary",
+                "error", "preview", "batches_total", "batches_done",
+            ])
             s.quiz.all().delete()
             s.word_game.all().delete()
-            QuizQuestion.objects.bulk_create(
-                [
-                    QuizQuestion(
-                        study_set=s,
-                        prompt=q.prompt,
-                        choices=q.choices,
-                        correct_index=q.correct_index,
-                        explanation=q.explanation,
-                        topic=q.topic,
-                        difficulty=q.difficulty,
-                        order=i,
-                    )
-                    for i, q in enumerate(all_quiz)
-                ]
-            )
-            WordChallenge.objects.bulk_create(
-                [
-                    WordChallenge(
-                        study_set=s, word=w.word, clue=w.clue, order=i
-                    )
-                    for i, w in enumerate(result.word_game)
-                ]
-            )
 
-            # Consume one free credit only on success.
-            Subscription.objects.filter(user=s.owner, is_premium=False).update(
-                usage_count=F("usage_count") + 1
-            )
-
-        # Award creation points server-side, idempotently (one award per set)
-        # so it can't be farmed by replaying a client request.
-        from apps.rewards.services import award
-
-        award(
-            study_set.owner,
-            reason="Created a study set",
-            dedupe_key=f"studyset:{study_set_id}",
-        )
+        # Fan out. Batch 0 is enqueued first so first content shows fastest.
+        # Each batch is independent: a failure retries only that slice, and
+        # the rest of the document is unaffected.
+        for index, chunk in enumerate(chunks):
+            process_batch.delay(str(study_set_id), index, total, chunk)
 
         logger.info(
-            "Generated StudySet %s in %.1fs (sections=%d quiz=%d words=%d)",
-            study_set_id,
-            time.monotonic() - started,
-            len(result.sections),
-            len(all_quiz),
-            len(result.word_game),
+            "StudySet %s fanned out into %d batch(es).", study_set_id, total
         )
 
     except GenerationError as exc:
         StudySet.objects.filter(id=study_set_id).update(
             status=StudySet.Status.FAILED, error=str(exc)
         )
-        logger.warning("Generation failed for %s: %s", study_set_id, exc)
+        logger.warning("Generation setup failed for %s: %s", study_set_id, exc)
     except Exception as exc:  # transient/infra error — retry, then mark failed
-        logger.exception("Unexpected generation error for %s", study_set_id)
+        logger.exception("Unexpected error preparing generation for %s", study_set_id)
         try:
             raise self.retry(exc=exc)
         except self.MaxRetriesExceededError:
@@ -277,3 +190,170 @@ def generate_study_set(self, study_set_id):
                 status=StudySet.Status.FAILED,
                 error="Generation failed after retries.",
             )
+
+
+# --------------------------------------------------------------------------- #
+# Per-batch worker: generate one chunk and persist it incrementally.
+# --------------------------------------------------------------------------- #
+@shared_task(bind=True, max_retries=2, default_retry_delay=10)
+def process_batch(self, study_set_id, index, total, chunk):
+    started = time.monotonic()
+    try:
+        study_set = StudySet.objects.get(id=study_set_id)
+    except StudySet.DoesNotExist:
+        return
+    if study_set.status == StudySet.Status.FAILED:
+        return  # the run was already abandoned; don't pile on
+
+    try:
+        result, usage = generate(chunk)
+    except Exception as exc:
+        # Retry just this slice. If it's exhausted, still tick the counter so
+        # the set can finalize on whatever the other batches produced.
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            logger.warning(
+                "Batch %d/%d failed for StudySet %s: %s",
+                index + 1, total, study_set_id, exc,
+            )
+            finalized, ready = _record_batch(
+                study_set_id, sections=[], quiz=[], words=[], title=""
+            )
+            _finalize_if_done(finalized, ready, study_set_id, study_set.owner)
+            return
+
+    # Best-effort token logging — one row per batch (LLM call).
+    try:
+        from .models import TokenUsage
+
+        TokenUsage.objects.create(
+            user_id=study_set.owner_id,
+            study_set_id=study_set_id,
+            provider=usage.get("provider", ""),
+            model=usage.get("model", ""),
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
+    except Exception:  # usage logging must never break generation
+        logger.warning("Failed to record token usage for %s", study_set_id)
+
+    finalized, ready = _record_batch(
+        study_set_id,
+        sections=_sections_to_json(result.sections),
+        quiz=[q for sec in result.sections for q in sec.quiz],
+        words=list(result.word_game),
+        title=result.title,
+    )
+    _finalize_if_done(finalized, ready, study_set_id, study_set.owner)
+
+    logger.info(
+        "Batch %d/%d done for StudySet %s in %.1fs",
+        index + 1, total, study_set_id, time.monotonic() - started,
+    )
+
+
+def _record_batch(study_set_id, *, sections, quiz, words, title):
+    """Append one batch's results to the set under a row lock, deduping quiz
+    items and words against what is already saved. Returns (finalized, ready):
+    `finalized` is True for the single batch that completes the set, `ready`
+    True when that finalized set has usable content.
+
+    The slow LLM call happens BEFORE this — the lock is held only for the short
+    append, so parallel batches barely contend.
+    """
+    with transaction.atomic():
+        s = StudySet.objects.select_for_update().get(id=study_set_id)
+
+        merged_sections = list(s.sections or [])
+        merged_sections.extend(sections)
+        s.sections = merged_sections
+
+        # Title + summary come from the first batch that yields content.
+        if not s.title:
+            s.title = title or _derive_title(s.source_kind, s.source_ref)
+        if not s.summary and sections:
+            s.summary = (sections[0].get("content") or "")[:280]
+        s.key_points = [sec["title"] for sec in merged_sections]
+        s.topics = s.key_points
+
+        # Dedup quiz against prompts already on the set, then append in order.
+        seen = {
+            (p or "").strip().lower()[:80]
+            for p in s.quiz.values_list("prompt", flat=True)
+        }
+        next_order = (s.quiz.aggregate(m=Max("order"))["m"] or -1) + 1
+        new_quiz = []
+        for q in quiz:
+            key = (q.prompt or "").strip().lower()[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            new_quiz.append(QuizQuestion(
+                study_set=s,
+                prompt=q.prompt,
+                choices=q.choices,
+                correct_index=q.correct_index,
+                explanation=q.explanation,
+                topic=q.topic,
+                difficulty=q.difficulty,
+                order=next_order,
+            ))
+            next_order += 1
+        QuizQuestion.objects.bulk_create(new_quiz)
+
+        # Words: dedup by word and cap the set's total at _MAX_WORDS.
+        seen_words = set(s.word_game.values_list("word", flat=True))
+        word_order = (s.word_game.aggregate(m=Max("order"))["m"] or -1) + 1
+        new_words = []
+        for w in words:
+            if len(seen_words) >= _MAX_WORDS:
+                break
+            if w.word in seen_words:
+                continue
+            seen_words.add(w.word)
+            new_words.append(
+                WordChallenge(study_set=s, word=w.word, clue=w.clue, order=word_order)
+            )
+            word_order += 1
+        WordChallenge.objects.bulk_create(new_words)
+
+        # Progress + status. The increment is under the row lock, so exactly
+        # one batch observes the set as complete and triggers finalize.
+        s.batches_done = (s.batches_done or 0) + 1
+        finalized = s.batches_done >= s.batches_total
+        if finalized:
+            if s.sections:
+                s.status = StudySet.Status.READY
+                s.error = ""
+            else:
+                s.status = StudySet.Status.FAILED
+                s.error = "Generation produced no usable content."
+        else:
+            # PARTIAL only once there is something worth reading.
+            s.status = (
+                StudySet.Status.PARTIAL if s.sections else StudySet.Status.PROCESSING
+            )
+        s.save()
+        ready = finalized and s.status == StudySet.Status.READY
+
+    return finalized, ready
+
+
+def _finalize_if_done(finalized, ready, study_set_id, owner):
+    """Run once-per-set side effects after the last batch: consume a free
+    credit and award creation points. Guarded by `finalized` (exactly one
+    batch sees it) so neither can be double-counted."""
+    if not (finalized and ready):
+        return
+    # Consume one free credit only on a set that actually produced content.
+    consume_free_credit(owner)
+    # Award creation points idempotently (one award per set) so replaying a
+    # client request can't farm them.
+    from apps.rewards.services import award
+
+    award(
+        owner,
+        reason="Created a study set",
+        dedupe_key=f"studyset:{study_set_id}",
+    )
