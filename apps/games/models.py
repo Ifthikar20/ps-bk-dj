@@ -221,3 +221,44 @@ class GameTelemetry(TimeStampedModel):
 
     def __str__(self):
         return f"{self.game_key} · {self.kind}"
+
+
+class GameToggle(TimeStampedModel):
+    """A simple on/off switch for ANY game, by its stable client key.
+
+    This is how the native, in-app games (Flappy, the space shooters, the
+    crossword, …) — which are NOT in the hosted ``Game`` catalog — get turned
+    on and off without an app release. The app fetches these flags at startup
+    and unregisters any key marked disabled (a remote kill-switch).
+
+    ``key`` matches ``LearningGame.id`` on the client (e.g. ``flappy_web``). A
+    missing row means "enabled" (fail-open), so you only need a row for a game
+    you actually want to be able to toggle. Hosted web games are normally
+    switched via ``Game.enabled`` instead — but a disabled flag here overrides
+    them too, so this doubles as a catch-all kill-switch.
+    """
+
+    key = models.SlugField(
+        max_length=64,
+        unique=True,
+        help_text="Stable client id (LearningGame.id), e.g. 'flappy_web'.",
+    )
+    label = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+        help_text="Friendly name shown in this list, e.g. 'Flappy Pip'.",
+    )
+    enabled = models.BooleanField(default=True, db_index=True)
+    note = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="Optional reason for the current state, for your reference.",
+    )
+
+    class Meta:
+        ordering = ("label", "key")
+
+    def __str__(self):
+        return f"{self.label or self.key} ({'on' if self.enabled else 'OFF'})"

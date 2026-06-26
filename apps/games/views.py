@@ -8,13 +8,14 @@ from rest_framework.views import APIView
 
 from apps.common.permissions import IsOwner
 
-from .models import Game, GameSession, GameTelemetry
+from .models import Game, GameSession, GameTelemetry, GameToggle
 from .serializers import (
     GameSerializer,
     GameSessionSerializer,
     GameSessionStartSerializer,
     GameSessionUpdateSerializer,
     GameTelemetrySerializer,
+    GameToggleSerializer,
 )
 
 
@@ -41,6 +42,25 @@ class GameListView(ListAPIView):
         if self.request.query_params.get("channel") != "beta":
             qs = qs.filter(audience=Game.Audience.STABLE)
         return qs
+
+
+class GameFlagsView(ListAPIView):
+    """GET /games/flags — per-game on/off switches the app applies at startup.
+
+    Unauthenticated catalog data like /games. Returns every GameToggle row; the
+    client enables games by default and only acts on rows marked
+    ``enabled: false`` — a remote kill-switch that can pull any game, including
+    a native (in-app) one, with no app release. Fail-open by design: if this
+    can't be reached the client keeps whatever games it already has.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = GameToggleSerializer
+    pagination_class = None  # tiny list — return it whole
+
+    def get_queryset(self):
+        return GameToggle.objects.all()
 
 
 class GameTelemetryView(APIView):

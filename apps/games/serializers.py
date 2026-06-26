@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Game, GameSession, GameTelemetry
+from .models import Game, GameSession, GameTelemetry, GameToggle
 
 
 class GameSerializer(serializers.ModelSerializer):
@@ -23,6 +23,15 @@ class GameSerializer(serializers.ModelSerializer):
             "min_app_version",
             "sdk_version",
         )
+
+
+class GameToggleSerializer(serializers.ModelSerializer):
+    """The per-game on/off flags the app reads at startup. The client enables
+    games by default and only acts on rows with ``enabled: false``."""
+
+    class Meta:
+        model = GameToggle
+        fields = ("key", "enabled")
 
 
 class GameTelemetrySerializer(serializers.Serializer):

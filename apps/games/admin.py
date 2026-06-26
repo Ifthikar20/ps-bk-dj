@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Game, GameSession, GameTelemetry
+from .models import Game, GameSession, GameTelemetry, GameToggle
 
 
 @admin.register(Game)
@@ -38,6 +38,18 @@ class GameAdmin(admin.ModelAdmin):
         ),
         ("Meta", {"fields": ("id", "created_at", "updated_at")}),
     )
+
+
+@admin.register(GameToggle)
+class GameToggleAdmin(admin.ModelAdmin):
+    """One row per togglable game. Untick `enabled` + Save to pull a game
+    (native or hosted) from every client — no app release required."""
+
+    list_display = ("label", "key", "enabled", "note", "updated_at")
+    list_editable = ("enabled", "note")
+    list_filter = ("enabled",)
+    search_fields = ("key", "label", "note")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(GameSession)
