@@ -57,6 +57,21 @@ restore one **without an app release**, use the **GameToggle** switch board:
 - A disabled flag overrides a *hosted* game too (catch-all kill-switch); hosted
   games are otherwise switched via the manifest `enabled` field above.
 
+**Control API (staff only).** Toggle games programmatically — the downstream
+API a custom admin page calls, instead of the Django admin UI. Requires a staff
+token; the public `GET /games/flags` reflects the result.
+
+```
+GET    /api/v1/games/toggles/                 list switches + state
+POST   /api/v1/games/toggles/                 add    {key, label?, enabled?}
+GET    /api/v1/games/toggles/{key}/           one switch
+PATCH  /api/v1/games/toggles/{key}/           edit   {"enabled": false}
+DELETE /api/v1/games/toggles/{key}/           remove (game reverts to "on")
+POST   /api/v1/games/toggles/{key}/enable/    turn the game on
+POST   /api/v1/games/toggles/{key}/disable/   turn the game off
+POST   /api/v1/games/toggles/{key}/toggle/    flip it
+```
+
 ## Play tracking + cross-platform scores
 
 The host forwards each game's SDK events here, so play history, save-state and

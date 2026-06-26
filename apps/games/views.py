@@ -2,7 +2,7 @@ from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import ListAPIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -15,6 +15,7 @@ from .serializers import (
     GameSessionStartSerializer,
     GameSessionUpdateSerializer,
     GameTelemetrySerializer,
+    GameToggleAdminSerializer,
     GameToggleSerializer,
 )
 
@@ -61,6 +62,51 @@ class GameFlagsView(ListAPIView):
 
     def get_queryset(self):
         return GameToggle.objects.all()
+
+
+class GameToggleViewSet(viewsets.ModelViewSet):
+    """Staff-only remote control for the per-game on/off switches — the
+    downstream API an internal admin page calls. Games are addressed by their
+    stable client ``key`` (e.g. 'flappy_web'); the public app then reads the
+    resulting state from GET /games/flags.
+
+      GET    /games/toggles/                 list every switch + state
+      POST   /games/toggles/                 add a switch {key, label?, enabled?}
+      GET    /games/toggles/{key}/           one switch
+      PATCH  /games/toggles/{key}/           edit (e.g. {"enabled": false})
+      DELETE /games/toggles/{key}/           remove it (game reverts to "on")
+      POST   /games/toggles/{key}/enable/    turn the game on
+      POST   /games/toggles/{key}/disable/   turn the game off
+      POST   /games/toggles/{key}/toggle/    flip it
+    """
+
+    permission_classes = [IsAdminUser]
+    serializer_class = GameToggleAdminSerializer
+    queryset = GameToggle.objects.all()
+    lookup_field = "key"
+    lookup_value_regex = "[-a-zA-Z0-9_]+"
+
+    def _set_enabled(self, enabled):
+        toggle = self.get_object()
+        if toggle.enabled != enabled:
+            toggle.enabled = enabled
+            toggle.save(update_fields=["enabled", "updated_at"])
+        return Response(self.get_serializer(toggle).data)
+
+    @action(detail=True, methods=["post"])
+    def enable(self, request, key=None):
+        return self._set_enabled(True)
+
+    @action(detail=True, methods=["post"])
+    def disable(self, request, key=None):
+        return self._set_enabled(False)
+
+    @action(detail=True, methods=["post"])
+    def toggle(self, request, key=None):
+        toggle = self.get_object()
+        toggle.enabled = not toggle.enabled
+        toggle.save(update_fields=["enabled", "updated_at"])
+        return Response(self.get_serializer(toggle).data)
 
 
 class GameTelemetryView(APIView):

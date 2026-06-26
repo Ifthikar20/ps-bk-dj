@@ -6,10 +6,12 @@ from .views import (
     GameListView,
     GameSessionViewSet,
     GameTelemetryView,
+    GameToggleViewSet,
 )
 
 router = DefaultRouter()
 router.register("games/sessions", GameSessionViewSet, basename="game-session")
+router.register("games/toggles", GameToggleViewSet, basename="game-toggle")
 
 urlpatterns = [
     path("games/", GameListView.as_view(), name="games"),

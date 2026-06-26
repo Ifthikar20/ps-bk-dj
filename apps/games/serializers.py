@@ -34,6 +34,17 @@ class GameToggleSerializer(serializers.ModelSerializer):
         fields = ("key", "enabled")
 
 
+class GameToggleAdminSerializer(serializers.ModelSerializer):
+    """Full read/write shape for the staff-only games-control API. Unlike the
+    lean public flag serializer, this exposes the label/note and timestamps an
+    admin page needs to render and edit each switch."""
+
+    class Meta:
+        model = GameToggle
+        fields = ("key", "label", "enabled", "note", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
+
+
 class GameTelemetrySerializer(serializers.Serializer):
     """Input for POST /games/telemetry."""
 
