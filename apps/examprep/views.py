@@ -62,6 +62,20 @@ class ExamPlanViewSet(viewsets.ModelViewSet):
         data["days"] = _days_summary(plan)
         return Response(data)
 
+    @action(detail=True, methods=["get"])
+    def schedule(self, request, pk=None):
+        """The proposed/active day-by-day plan (for the review + dashboard map)."""
+        plan = self.get_object()
+        return Response(
+            {
+                "status": plan.status,
+                "exam_title": plan.exam_title,
+                "exam_date": plan.exam_date,
+                "material_title": plan.material_title,
+                "days": _days_summary(plan),
+            }
+        )
+
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """Approve a proposed guide -> the plan becomes active."""
