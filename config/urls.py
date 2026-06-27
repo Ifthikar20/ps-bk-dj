@@ -2,6 +2,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path, re_path
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.static import serve as static_serve
 
 
@@ -32,10 +33,13 @@ urlpatterns = [
 # the SDK from the host root (../../../playstudy-sdk.js), so we serve at root.
 if settings.DEBUG:
     _games_root = str(settings.BASE_DIR / "games_host")
+    # The bundles are meant to be embedded in the web app's iframe, so exempt
+    # them from the global X-Frame-Options: DENY (otherwise the browser refuses
+    # to render the game and shows "refused to connect").
     urlpatterns += [
         re_path(
             r"^(?P<path>(?:games/.*|playstudy-sdk\.js|sw\.js))$",
-            static_serve,
+            xframe_options_exempt(static_serve),
             {"document_root": _games_root},
         ),
     ]
