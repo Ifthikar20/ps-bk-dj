@@ -30,7 +30,7 @@ pytesseract==0.3.13
 Pillow==11.0.0
 
 # --- Auth (social) ---
-google-auth==2.37.0
+google-auth==2.55.1
 PyJWT[crypto]==2.10.1
 cryptography==44.0.0
 
