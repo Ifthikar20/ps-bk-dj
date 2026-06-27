@@ -8,21 +8,33 @@ User = get_user_model()
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "email", "name", "avatar_url")
+        fields = ("id", "email", "name", "avatar_url", "preferences")
         read_only_fields = fields
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Mutable profile fields. Email/provider are intentionally not editable."""
 
+    preferences = serializers.DictField(required=False)
+
     class Meta:
         model = User
-        fields = ("name", "avatar_url", "timezone")
+        fields = ("name", "avatar_url", "timezone", "preferences")
         extra_kwargs = {
             "name": {"required": False},
             "avatar_url": {"required": False},
             "timezone": {"required": False},
         }
+
+    def update(self, instance, validated_data):
+        # Shallow-merge preferences so a partial update from one device doesn't
+        # clobber keys set by another (e.g. mobile-only settings).
+        prefs = validated_data.pop("preferences", None)
+        if prefs is not None:
+            merged = dict(instance.preferences or {})
+            merged.update(prefs)
+            instance.preferences = merged
+        return super().update(instance, validated_data)
 
     def validate_name(self, value):
         value = value.strip()
