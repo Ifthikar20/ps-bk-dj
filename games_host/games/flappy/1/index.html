@@ -34,8 +34,8 @@
     <div id="ui" class="overlay">
       <div class="card">
         <div class="title">🐤 Flappy Pip</div>
-        <div class="muted">Tap, click, or press Space to flap through the gaps.</div>
-        <div class="muted">Crash and you can answer a question to revive.</div>
+        <div class="muted">Tap, click, or press Space to help Pip fly.</div>
+        <div class="muted">Grab bones · dodge pipes &amp; bees · answer to revive.</div>
         <button class="btn" id="start" style="margin-top:14px">Start</button>
       </div>
     </div>
@@ -44,62 +44,92 @@
     <script>
       (function () {
         "use strict";
-        var cv = document.getElementById("c");
-        var ctx = cv.getContext("2d");
-        var ui = document.getElementById("ui");
-
+        var cv = document.getElementById("c"), ctx = cv.getContext("2d"), ui = document.getElementById("ui");
         var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
-        function resize() {
-          W = cv.clientWidth; H = cv.clientHeight;
-          cv.width = W * DPR; cv.height = H * DPR;
-          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-        }
+        function resize() { W = cv.clientWidth; H = cv.clientHeight; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0); }
         window.addEventListener("resize", resize); resize();
+
+        // ---- tuning (mirrors flappy_native_widget.dart) ----------------------
+        var GRAVITY = 1500, FLAP = -460, BASE_SPEED = 165, BASE_GAP = 205;
+        var PIPE_W = 70, BASE_PIPE_EVERY = 1.6, GROUND_H = 90, MARGIN = 56;
+        var BIOME_LEN = 2200;
 
         var quiz = [];
         PlayStudyGame.onInit(function (m) { quiz = (m.quiz || []).filter(function (q) { return q && q.prompt && q.choices; }); });
 
         var state = "ready"; // ready | play | quiz | over
-        var bird, pipes, score, passed, revives, t, gap, speed, spawnAt;
+        var bird, pipes = [], bones = [], bees = [], parts = [], trail = [], pops = [];
+        var score = 0, bonesEaten = 0, revives = 0;
+        var t = 0, dist = 0, shake = 0, invuln = 0, beeTimer = 0, nextQuizAt = 5, last = 0;
 
         function reset() {
-          bird = { x: W * 0.28, y: H / 2, v: 0, r: Math.max(12, Math.min(W, H) * 0.028) };
-          pipes = []; score = 0; passed = 0; revives = 0; t = 0;
-          gap = Math.max(150, H * 0.32); speed = 2.4; spawnAt = 0;
+          bird = { x: W * 0.30, y: H * 0.42, vy: 0, r: 19, wing: 0 };
+          pipes = []; bones = []; bees = []; parts = []; trail = []; pops = [];
+          score = 0; bonesEaten = 0; revives = 0; t = 0; dist = 0; shake = 0; invuln = 0;
+          beeTimer = 0; nextQuizAt = 5; spawnTimer = 0; last = 0;
         }
+        var spawnTimer = 0;
         function start() { reset(); state = "play"; ui.classList.add("hidden"); }
+
+        function speed() { return Math.min(330, BASE_SPEED + score * 3.0); }
+        function gap() { return Math.max(150, BASE_GAP - score * 2.4); }
+        function pipeEvery() { return Math.max(1.12, BASE_PIPE_EVERY - score * 0.02); }
 
         function flap() {
           if (state === "ready") return start();
-          if (state === "play") bird.v = -Math.max(5.2, H * 0.011);
+          if (state !== "play") return;
+          bird.vy = FLAP; bird.wing = 1;
+          for (var i = 0; i < 4; i++) parts.push({ x: bird.x - 14, y: bird.y + 10,
+            vx: -60 - Math.random() * 60, vy: 20 - Math.random() * 40, life: 0.4, max: 0.4, c: "#ffffff" });
         }
 
-        function spawn() {
-          var margin = 60;
-          var gy = margin + Math.random() * (H - gap - margin * 2);
-          pipes.push({ x: W + 40, top: gy, scored: false, w: Math.max(52, W * 0.09) });
+        function spawnPipe() {
+          var g = gap();
+          var span = H - GROUND_H - g - MARGIN * 2;
+          var top = MARGIN + Math.random() * Math.max(10, span);
+          var sway = score >= 6 && Math.random() < 0.55;
+          var amp = sway ? Math.min(70, 12 + score * 1.6) : 0;
+          pipes.push({ x: W + PIPE_W, top: top, g: g, scored: false,
+            amp: amp, sp: 1.4 + Math.random() * 1.2, ph: Math.random() * 6.28 });
+          // bone in the gap
+          if (Math.random() < 0.6)
+            bones.push({ px: pipes[pipes.length - 1], gone: false, ph: Math.random() * 6.28 });
+          // double pipe cluster
+          if (score >= 10 && Math.random() < 0.3) {
+            var top2 = MARGIN + Math.random() * Math.max(10, span);
+            pipes.push({ x: W + PIPE_W + g + 90, top: top2, g: g + 6, scored: false, amp: 0, sp: 1, ph: 0 });
+          }
         }
+        function pipeTop(p) { return p.top + (p.amp ? Math.sin(t * p.sp + p.ph) * p.amp : 0); }
+
+        function spawnBee() {
+          bees.push({ x: W + 30, y: MARGIN + Math.random() * (H - GROUND_H - MARGIN * 2), ph: Math.random() * 3.14 });
+        }
+
+        function pop(text, x, y, c) { pops.push({ text: text, x: x, y: y, c: c, life: 0.9, max: 0.9 }); }
+        function burst(x, y, n, c, sp) { for (var i = 0; i < n; i++) { var a = Math.random() * 6.28;
+          parts.push({ x: x, y: y, vx: Math.cos(a) * sp * Math.random(), vy: Math.sin(a) * sp * Math.random(), life: 0.6, max: 0.6, c: c }); } }
 
         function crash() {
-          if (quiz.length && revives < 3) { askRevive(); }
+          shake = 1; burst(bird.x, bird.y, 16, "#ffcf33", 320);
+          if (quiz.length && revives < 3) askQuiz(true);
           else end();
         }
 
         function end() {
-          state = "over";
-          PlayStudyGame.gameover(score);
-          ui.innerHTML =
-            '<div class="card"><div class="title">Game over</div>' +
-            '<div class="muted" style="font-size:20px;margin:8px 0">Score ' + score + '</div>' +
+          state = "over"; PlayStudyGame.gameover(score);
+          ui.innerHTML = '<div class="card"><div class="title">Game over</div>' +
+            '<div class="muted" style="font-size:20px;margin:8px 0">Score ' + score + ' · 🦴 ' + bonesEaten + '</div>' +
             '<button class="btn" id="again">Play again</button></div>';
           ui.classList.remove("hidden");
           document.getElementById("again").onclick = start;
         }
 
-        function askRevive() {
+        function askQuiz(isRevive) {
           state = "quiz";
           var q = quiz[Math.floor(Math.random() * quiz.length)];
-          var html = '<div class="card"><div class="muted">Answer to revive</div>' +
+          var head = isRevive ? "Answer to revive" : "Answer for a shield";
+          var html = '<div class="card"><div class="muted">' + head + '</div>' +
             '<div class="prompt">' + esc(q.prompt) + '</div><div class="choices">';
           q.choices.forEach(function (c, i) { html += '<button class="choice" data-i="' + i + '">' + esc(c) + '</button>'; });
           html += '</div></div>';
@@ -108,92 +138,249 @@
           ui.querySelectorAll(".choice").forEach(function (b) {
             b.onclick = function () {
               if (locked) return; locked = true;
-              var i = +b.getAttribute("data-i");
-              var ok = i === q.correctIndex;
+              var i = +b.getAttribute("data-i"), ok = i === q.correctIndex;
               ui.querySelectorAll(".choice")[q.correctIndex].classList.add("good");
               if (!ok) b.classList.add("bad");
-              setTimeout(function () {
-                if (ok) { revive(); } else { end(); }
-              }, 750);
+              setTimeout(function () { ok ? revive() : end(); }, 750);
             };
           });
         }
 
         function revive() {
-          revives++;
-          PlayStudyGame.reward("revive");
-          // clear pipes near the bird and recentre
+          revives++; score += 2; PlayStudyGame.score(score); PlayStudyGame.reward("revive");
           pipes = pipes.filter(function (p) { return p.x > bird.x + 220; });
-          bird.y = H / 2; bird.v = 0;
-          ui.classList.add("hidden");
-          state = "play";
+          bees = []; bird.y = H * 0.42; bird.vy = 0; invuln = 1.8;
+          burst(bird.x, bird.y, 10, "#8fe3ff", 240); pop("Revived!", bird.x, bird.y - 30, "#5bd6a6");
+          ui.classList.add("hidden"); state = "play";
+        }
+
+        // ---- biome blending ---------------------------------------------------
+        var BIOMES = [
+          { sky: ["#4ec0f7", "#9bd9fb", "#bfefff"], grd: "#8fcb6b", trim: "#6fb24e", pipe: "#52d784", pipeD: "#2fae5e", night: 0 },
+          { sky: ["#ff8e6e", "#ffc28a", "#ffe3b0"], grd: "#b98a5e", trim: "#9c6e45", pipe: "#e39b5a", pipeD: "#b9743a", night: 0.15 },
+          { sky: ["#161a36", "#273063", "#3a3f77"], grd: "#2c2f4a", trim: "#3d4166", pipe: "#5c6bc0", pipeD: "#3949ab", night: 1 },
+          { sky: ["#7b6ccb", "#c9a2d8", "#ffd2c2"], grd: "#8e9b6b", trim: "#73824e", pipe: "#8fc77e", pipeD: "#5fa055", night: 0.25 },
+        ];
+        function hexLerp(a, b, k) {
+          var ai = parseInt(a.slice(1), 16), bi = parseInt(b.slice(1), 16);
+          var ar = ai >> 16, ag = (ai >> 8) & 255, ab = ai & 255;
+          var br = bi >> 16, bg = (bi >> 8) & 255, bb = bi & 255;
+          var r = Math.round(ar + (br - ar) * k), g = Math.round(ag + (bg - ag) * k), bl = Math.round(ab + (bb - ab) * k);
+          return "rgb(" + r + "," + g + "," + bl + ")";
+        }
+        function biome() {
+          var f = (dist / BIOME_LEN);
+          var i = Math.floor(f) % BIOMES.length, j = (i + 1) % BIOMES.length;
+          var k = f - Math.floor(f); k = k * k * (3 - 2 * k); // smoothstep
+          var A = BIOMES[i], B = BIOMES[j];
+          return {
+            sky: [hexLerp(A.sky[0], B.sky[0], k), hexLerp(A.sky[1], B.sky[1], k), hexLerp(A.sky[2], B.sky[2], k)],
+            grd: hexLerp(A.grd, B.grd, k), trim: hexLerp(A.trim, B.trim, k),
+            pipe: hexLerp(A.pipe, B.pipe, k), pipeD: hexLerp(A.pipeD, B.pipeD, k),
+            night: A.night + (B.night - A.night) * k,
+          };
         }
 
         // ---- drawing ----------------------------------------------------------
-        function drawBg() {
+        function drawSky(bm) {
           var g = ctx.createLinearGradient(0, 0, 0, H);
-          g.addColorStop(0, "#8a7efa"); g.addColorStop(1, "#1f1b2e");
+          g.addColorStop(0, bm.sky[0]); g.addColorStop(0.5, bm.sky[1]); g.addColorStop(1, bm.sky[2]);
           ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+          // sun / moon
+          var sx = W * 0.78, sy = H * 0.22;
+          if (bm.night < 1) { ctx.globalAlpha = (1 - bm.night) * 0.95; ctx.fillStyle = "#fff1b0";
+            ctx.beginPath(); ctx.arc(sx, sy, 34, 0, 6.28); ctx.fill(); ctx.globalAlpha = 1; }
+          if (bm.night > 0.1) { ctx.globalAlpha = bm.night * 0.95; ctx.fillStyle = "#eff3ff";
+            ctx.beginPath(); ctx.arc(sx, sy, 28, 0, 6.28); ctx.fill();
+            ctx.fillStyle = bm.sky[0]; ctx.beginPath(); ctx.arc(sx + 10, sy - 8, 26, 0, 6.28); ctx.fill(); ctx.globalAlpha = 1; }
+          // stars at night
+          if (bm.night > 0.25) { ctx.fillStyle = "#fff"; ctx.globalAlpha = (bm.night - 0.25) * 1.1;
+            for (var i = 0; i < 36; i++) { var x = (i * 97.3) % W, y = ((i * 53.1) % (H * 0.55));
+              var tw = 0.5 + 0.5 * Math.sin(t * 2 + i); ctx.globalAlpha = (bm.night - 0.25) * 1.1 * tw;
+              ctx.fillRect(x, y, 2, 2); } ctx.globalAlpha = 1; }
+          // parallax clouds
+          for (var c = 0; c < 6; c++) {
+            var depth = 0.3 + (c % 3) * 0.3;
+            var cx = (W + 200 - ((dist * 0.04 * depth + c * 240) % (W + 300)));
+            var cy = 40 + (c * 53) % (H * 0.45);
+            ctx.globalAlpha = 0.25 + depth * 0.25 * (1 - bm.night * 0.6); ctx.fillStyle = "#ffffff";
+            var s = 18 + depth * 14;
+            ctx.beginPath(); ctx.arc(cx, cy, s, 0, 6.28); ctx.arc(cx + s, cy + 4, s * 0.8, 0, 6.28);
+            ctx.arc(cx - s, cy + 4, s * 0.7, 0, 6.28); ctx.fill();
+          }
+          ctx.globalAlpha = 1;
         }
-        function drawPipe(p) {
-          ctx.fillStyle = "#6b5ce7";
-          ctx.fillRect(p.x, 0, p.w, p.top);
-          ctx.fillRect(p.x, p.top + gap, p.w, H - p.top - gap);
-          ctx.fillStyle = "rgba(255,255,255,.18)";
-          ctx.fillRect(p.x, p.top - 14, p.w, 14);
-          ctx.fillRect(p.x, p.top + gap, p.w, 14);
+        function drawGround(bm) {
+          var gy = H - GROUND_H;
+          ctx.fillStyle = bm.grd; ctx.fillRect(0, gy, W, GROUND_H);
+          ctx.fillStyle = bm.trim; ctx.fillRect(0, gy, W, 10);
+          ctx.fillStyle = bm.trim;
+          for (var x = -((dist) % 28); x < W; x += 28) { ctx.beginPath(); ctx.arc(x, gy + 6, 3, 0, 6.28); ctx.fill(); }
         }
-        function drawPip() {
-          var r = bird.r;
-          ctx.save(); ctx.translate(bird.x, bird.y);
-          ctx.rotate(Math.max(-0.5, Math.min(0.9, bird.v * 0.05)));
-          // body
-          ctx.fillStyle = "#f7941d"; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
-          ctx.lineWidth = 2; ctx.strokeStyle = "#1a1a1a"; ctx.stroke();
-          // belly
-          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(r * .15, r * .25, r * .55, r * .5, 0, 0, 7); ctx.fill();
-          // eye
-          ctx.fillStyle = "#1a1a1a"; ctx.beginPath(); ctx.arc(r * .35, -r * .3, r * .16, 0, 7); ctx.fill();
-          // beak
-          ctx.fillStyle = "#e07a12"; ctx.beginPath();
-          ctx.moveTo(r * .8, 0); ctx.lineTo(r * 1.25, -r * .12); ctx.lineTo(r * 1.25, r * .12); ctx.fill();
+        function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y);
+          ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+          ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+        function drawPipe(p, bm) {
+          var top = pipeTop(p), bot = top + p.g, gy = H - GROUND_H;
+          var g = ctx.createLinearGradient(p.x, 0, p.x + PIPE_W, 0);
+          g.addColorStop(0, bm.pipeD); g.addColorStop(0.5, bm.pipe); g.addColorStop(1, bm.pipeD);
+          ctx.fillStyle = g;
+          rr(p.x, 0, PIPE_W, top, 8); ctx.fill();
+          rr(p.x, bot, PIPE_W, gy - bot, 8); ctx.fill();
+          ctx.fillStyle = bm.pipe;
+          rr(p.x - 5, top - 18, PIPE_W + 10, 18, 6); ctx.fill();
+          rr(p.x - 5, bot, PIPE_W + 10, 18, 6); ctx.fill();
+        }
+        function drawBone(b) {
+          var p = b.px, x = p.x + PIPE_W * 0.5, y = pipeTop(p) + p.g * 0.5 + Math.sin(b.ph) * 6;
+          b._x = x; b._y = y;
+          ctx.save(); ctx.translate(x, y); ctx.rotate(-0.5);
+          ctx.fillStyle = "#fff3d6"; rr(-9, -3, 18, 6, 3); ctx.fill();
+          [[-10, -4], [-10, 4], [10, -4], [10, 4]].forEach(function (k) {
+            ctx.beginPath(); ctx.arc(k[0], k[1], 4.5, 0, 6.28); ctx.fill(); });
+          ctx.lineWidth = 2; ctx.strokeStyle = "#6b5b3a";
+          rr(-9, -3, 18, 6, 3); ctx.stroke();
           ctx.restore();
         }
-        function hud() {
-          ctx.fillStyle = "#fff"; ctx.font = "700 28px system-ui";
-          ctx.textAlign = "center"; ctx.fillText(String(score), W / 2, 54);
-          if (revives) { ctx.font = "600 13px system-ui"; ctx.fillStyle = "#ffd9a8";
-            ctx.fillText("revives left: " + (3 - revives), W / 2, 78); }
+        function drawBee(b) {
+          ctx.save(); ctx.translate(b.x, b.y);
+          ctx.globalAlpha = 0.6 * Math.max(0, Math.sin(t * 30)) + 0.3; ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.ellipse(-6, -8, 7, 4, 0, 0, 6.28); ctx.ellipse(6, -8, 7, 4, 0, 0, 6.28); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#ffc83d"; ctx.beginPath(); ctx.ellipse(0, 0, 11, 8, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#2a2a2a"; ctx.fillRect(-4, -7, 3, 14); ctx.fillRect(2, -7, 3, 14);
+          ctx.lineWidth = 2; ctx.strokeStyle = "#2a2a2a"; ctx.beginPath(); ctx.ellipse(0, 0, 11, 8, 0, 0, 6.28); ctx.stroke();
+          ctx.beginPath(); ctx.arc(9, -1, 1.6, 0, 6.28); ctx.fill();
+          ctx.restore();
+        }
+        function drawBird() {
+          var r = bird.r, rot = Math.max(-0.5, Math.min(1.2, bird.vy / 620));
+          // trail
+          for (var i = 0; i < trail.length; i++) { var p = trail[i];
+            ctx.globalAlpha = i / trail.length * 0.16; ctx.fillStyle = "#fff";
+            ctx.beginPath(); ctx.arc(p.x, p.y, 3 + i / trail.length * 5, 0, 6.28); ctx.fill(); }
+          ctx.globalAlpha = 1;
+          ctx.save(); ctx.translate(bird.x, bird.y); ctx.rotate(rot);
+          if (invuln > 0) { ctx.globalAlpha = 0.35 + 0.25 * Math.sin(t * 8); ctx.fillStyle = "#8fe3ff";
+            ctx.beginPath(); ctx.arc(-r * 0.05, -r * 0.2, r * 2.4, 0, 6.28); ctx.fill(); ctx.globalAlpha = 1; }
+          // bird body (teal mount)
+          var wing = Math.sin(t * (bird.vy < 0 ? 22 : 11)) * (0.4 + bird.wing * 0.4);
+          ctx.fillStyle = "#1e928e"; ctx.beginPath();
+          ctx.ellipse(-r * 0.6, r * 0.1 + wing * 6, r * 0.9, r * 0.5, -0.6, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#36c5c0"; ctx.beginPath(); ctx.ellipse(0, r * 0.35, r * 1.35, r, 0, 0, 6.28); ctx.fill();
+          ctx.fillStyle = "#bff3f0"; ctx.beginPath(); ctx.ellipse(r * 0.1, r * 0.6, r, r * 0.6, 0, 0, 6.28); ctx.fill();
+          ctx.lineWidth = r * 0.12; ctx.strokeStyle = "#1a1a1a";
+          ctx.beginPath(); ctx.ellipse(0, r * 0.35, r * 1.35, r, 0, 0, 6.28); ctx.stroke();
+          // head + beak
+          ctx.fillStyle = "#36c5c0"; ctx.beginPath(); ctx.arc(r * 0.9, -r * 0.1, r * 0.55, 0, 6.28); ctx.fill();
+          ctx.lineWidth = r * 0.1; ctx.beginPath(); ctx.arc(r * 0.9, -r * 0.1, r * 0.55, 0, 6.28); ctx.stroke();
+          ctx.fillStyle = "#ff9e2c"; ctx.beginPath();
+          ctx.moveTo(r * 1.35, -r * 0.1); ctx.lineTo(r * 1.8, -r * 0.25); ctx.lineTo(r * 1.8, r * 0.05); ctx.fill();
+          ctx.fillStyle = "#1a1a1a"; ctx.beginPath(); ctx.arc(r * 1.0, -r * 0.25, r * 0.1, 0, 6.28); ctx.fill();
+          // Pip the rider on the back
+          drawPip(r);
+          ctx.restore();
+        }
+        function drawPip(r) {
+          ctx.save(); ctx.translate(-r * 0.15, -r * 0.95); var s = r * 0.85;
+          // torso
+          ctx.fillStyle = "#f7941d"; rr(-s * 0.5, s * 0.2, s, s * 0.7, s * 0.3); ctx.fill();
+          ctx.fillStyle = "#fff"; rr(-s * 0.32, s * 0.35, s * 0.64, s * 0.5, s * 0.2); ctx.fill();
+          // head
+          ctx.fillStyle = "#f7941d"; ctx.beginPath(); ctx.arc(0, -s * 0.2, s * 0.7, 0, 6.28); ctx.fill();
+          // ears
+          ctx.beginPath(); ctx.moveTo(-s * 0.6, -s * 0.5); ctx.lineTo(-s * 0.85, -s * 1.15); ctx.lineTo(-s * 0.25, -s * 0.7); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(s * 0.55, -s * 0.35, s * 0.22, s * 0.4, 0.5, 0, 6.28); ctx.fill();
+          // face
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(0, -s * 0.05, s * 0.45, s * 0.4, 0, 0, 6.28); ctx.fill();
+          var blink = Math.sin(t * 0.8) > 0.97 ? 0.15 : 1;
+          ctx.fillStyle = "#1a1a1a";
+          ctx.beginPath(); ctx.ellipse(-s * 0.18, -s * 0.12, s * 0.08, s * 0.1 * blink, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(s * 0.18, -s * 0.12, s * 0.08, s * 0.1 * blink, 0, 0, 6.28); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(0, s * 0.05, s * 0.1, s * 0.07, 0, 0, 6.28); ctx.fill();
+          // paws gripping
+          ctx.fillStyle = "#dce0e5"; ctx.beginPath(); ctx.arc(-s * 0.55, s * 0.55, s * 0.18, 0, 6.28);
+          ctx.arc(s * 0.55, s * 0.55, s * 0.18, 0, 6.28); ctx.fill();
+          ctx.restore();
+        }
+        function drawHud() {
+          ctx.fillStyle = "#fff"; ctx.font = "800 44px system-ui"; ctx.textAlign = "center";
+          ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 6;
+          ctx.fillText(String(score), W / 2, 56); ctx.shadowBlur = 0;
+          ctx.font = "700 15px system-ui"; ctx.textAlign = "left";
+          ctx.fillStyle = "#ffb24d"; ctx.fillText("🦴 " + bonesEaten, 16, 28);
+          ctx.textAlign = "right"; ctx.fillStyle = "#ff5a6e";
+          ctx.fillText("♥".repeat(Math.max(0, 3 - revives)), W - 16, 28);
         }
 
-        function loop() {
+        // ---- main loop --------------------------------------------------------
+        function loop(now) {
           requestAnimationFrame(loop);
-          drawBg();
-          if (state === "play") {
-            t++;
-            bird.v += Math.max(0.32, H * 0.0007);
-            bird.y += bird.v;
-            spawnAt -= 1;
-            if (spawnAt <= 0) { spawn(); spawnAt = Math.max(80, 150 - score * 2); }
-            var sp = speed + score * 0.06;
-            for (var i = pipes.length - 1; i >= 0; i--) {
-              var p = pipes[i]; p.x -= sp;
-              if (!p.scored && p.x + p.w < bird.x) {
-                p.scored = true; score++; passed++; PlayStudyGame.score(score);
-                if (passed % 5 === 0) PlayStudyGame.reward("checkpoint");
-              }
-              if (p.x + p.w < -10) pipes.splice(i, 1);
-              // collision
-              if (bird.x + bird.r > p.x && bird.x - bird.r < p.x + p.w &&
-                  (bird.y - bird.r < p.top || bird.y + bird.r > p.top + gap)) crash();
-            }
-            if (bird.y + bird.r > H || bird.y - bird.r < 0) crash();
-          }
-          pipes.forEach(drawPipe);
-          if (state !== "ready") drawPip();
-          if (state === "play") hud();
+          var dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016; last = now;
+          t += dt;
+          var bm = biome();
+          if (shake > 0) shake = Math.max(0, shake - dt * 2.6);
+          ctx.save();
+          if (shake > 0) ctx.translate(Math.sin(t * 80) * shake * 7, Math.cos(t * 67) * shake * 7);
+          drawSky(bm); drawGround(bm);
+
+          if (state === "play") update(dt);
+
+          pipes.forEach(function (p) { drawPipe(p, bm); });
+          bones.forEach(function (b) { if (!b.gone) drawBone(b); });
+          bees.forEach(drawBee);
+          parts.forEach(function (p) { ctx.globalAlpha = Math.min(1, p.life / p.max); ctx.fillStyle = p.c;
+            ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }); ctx.globalAlpha = 1;
+          if (state !== "ready") drawBird();
+          pops.forEach(function (p) { ctx.globalAlpha = Math.min(1, p.life / p.max);
+            ctx.fillStyle = p.c; ctx.font = "800 18px system-ui"; ctx.textAlign = "center";
+            ctx.fillText(p.text, p.x, p.y); }); ctx.globalAlpha = 1;
+          if (state === "play" || state === "quiz") drawHud();
+          ctx.restore();
         }
-        loop();
+
+        function update(dt) {
+          if (invuln > 0) invuln -= dt;
+          if (bird.wing > 0) bird.wing = Math.max(0, bird.wing - dt * 4);
+          bird.vy += GRAVITY * dt; bird.y += bird.vy * dt;
+          dist += speed() * dt;
+          trail.push({ x: bird.x - 8, y: bird.y }); if (trail.length > 14) trail.shift();
+
+          spawnTimer -= dt; if (spawnTimer <= 0) { spawnPipe(); spawnTimer = pipeEvery(); }
+          if (score >= 12) { beeTimer -= dt; if (beeTimer <= 0 && bees.length < 2) { spawnBee(); beeTimer = 3.2; } }
+
+          var sp = speed();
+          for (var i = pipes.length - 1; i >= 0; i--) {
+            var p = pipes[i]; p.x -= sp * dt;
+            if (!p.scored && p.x + PIPE_W < bird.x) { p.scored = true; score++; PlayStudyGame.score(score);
+              pop("+1", bird.x, bird.y - 28, "#ffd23f");
+              if (score >= nextQuizAt && quiz.length) { nextQuizAt = score + 6; askQuiz(false); return; } }
+            if (p.x + PIPE_W < -20) pipes.splice(i, 1);
+            var top = pipeTop(p), hr = bird.r * 0.82;
+            if (invuln <= 0 && bird.x + hr > p.x && bird.x - hr < p.x + PIPE_W &&
+                (bird.y - hr < top || bird.y + hr > top + p.g)) return crash();
+          }
+          // bones
+          for (var b = bones.length - 1; b >= 0; b--) { var bo = bones[b];
+            if (bo.gone || !bo.px || bo.px.x + PIPE_W < -20) { bones.splice(b, 1); continue; }
+            bo.ph += dt * 4;
+            if (bo._x != null && Math.hypot(bo._x - bird.x, bo._y - bird.y) < 30) {
+              bo.gone = true; bonesEaten++; score += 2; PlayStudyGame.score(score);
+              burst(bo._x, bo._y, 8, "#ffe08a", 220); pop("+2", bo._x, bo._y - 10, "#ffe08a"); } }
+          // bees
+          for (var e = bees.length - 1; e >= 0; e--) { var be = bees[e];
+            be.x -= (sp * 0.7 + 40) * dt; be.ph += dt * 6; be.y += Math.sin(be.ph) * 50 * dt;
+            if (be.x < -30) { bees.splice(e, 1); continue; }
+            if (invuln <= 0 && Math.abs(be.x - bird.x) < 24 && Math.abs(be.y - bird.y) < 22) return crash(); }
+          // particles + pops
+          for (var k = parts.length - 1; k >= 0; k--) { var pa = parts[k]; pa.life -= dt;
+            pa.x += pa.vx * dt; pa.y += pa.vy * dt; if (pa.life <= 0) parts.splice(k, 1); }
+          for (var q = pops.length - 1; q >= 0; q--) { pops[q].life -= dt; pops[q].y -= 40 * dt; if (pops[q].life <= 0) pops.splice(q, 1); }
+          // bounds
+          if (invuln <= 0 && (bird.y + bird.r > H - GROUND_H || bird.y - bird.r < 0)) return crash();
+          if (bird.y - bird.r < 0) { bird.y = bird.r; bird.vy = 0; }
+        }
+        requestAnimationFrame(loop);
 
         function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
           return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
