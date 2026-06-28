@@ -2,19 +2,21 @@ from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import ListAPIView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.permissions import IsOwner
 
-from .models import Game, GameSession, GameTelemetry
+from .models import Game, GameSession, GameTelemetry, GameToggle
 from .serializers import (
     GameSerializer,
     GameSessionSerializer,
     GameSessionStartSerializer,
     GameSessionUpdateSerializer,
     GameTelemetrySerializer,
+    GameToggleAdminSerializer,
+    GameToggleSerializer,
 )
 
 
@@ -41,6 +43,70 @@ class GameListView(ListAPIView):
         if self.request.query_params.get("channel") != "beta":
             qs = qs.filter(audience=Game.Audience.STABLE)
         return qs
+
+
+class GameFlagsView(ListAPIView):
+    """GET /games/flags — per-game on/off switches the app applies at startup.
+
+    Unauthenticated catalog data like /games. Returns every GameToggle row; the
+    client enables games by default and only acts on rows marked
+    ``enabled: false`` — a remote kill-switch that can pull any game, including
+    a native (in-app) one, with no app release. Fail-open by design: if this
+    can't be reached the client keeps whatever games it already has.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = GameToggleSerializer
+    pagination_class = None  # tiny list — return it whole
+
+    def get_queryset(self):
+        return GameToggle.objects.all()
+
+
+class GameToggleViewSet(viewsets.ModelViewSet):
+    """Staff-only remote control for the per-game on/off switches — the
+    downstream API an internal admin page calls. Games are addressed by their
+    stable client ``key`` (e.g. 'flappy_web'); the public app then reads the
+    resulting state from GET /games/flags.
+
+      GET    /games/toggles/                 list every switch + state
+      POST   /games/toggles/                 add a switch {key, label?, enabled?}
+      GET    /games/toggles/{key}/           one switch
+      PATCH  /games/toggles/{key}/           edit (e.g. {"enabled": false})
+      DELETE /games/toggles/{key}/           remove it (game reverts to "on")
+      POST   /games/toggles/{key}/enable/    turn the game on
+      POST   /games/toggles/{key}/disable/   turn the game off
+      POST   /games/toggles/{key}/toggle/    flip it
+    """
+
+    permission_classes = [IsAdminUser]
+    serializer_class = GameToggleAdminSerializer
+    queryset = GameToggle.objects.all()
+    lookup_field = "key"
+    lookup_value_regex = "[-a-zA-Z0-9_]+"
+
+    def _set_enabled(self, enabled):
+        toggle = self.get_object()
+        if toggle.enabled != enabled:
+            toggle.enabled = enabled
+            toggle.save(update_fields=["enabled", "updated_at"])
+        return Response(self.get_serializer(toggle).data)
+
+    @action(detail=True, methods=["post"])
+    def enable(self, request, key=None):
+        return self._set_enabled(True)
+
+    @action(detail=True, methods=["post"])
+    def disable(self, request, key=None):
+        return self._set_enabled(False)
+
+    @action(detail=True, methods=["post"])
+    def toggle(self, request, key=None):
+        toggle = self.get_object()
+        toggle.enabled = not toggle.enabled
+        toggle.save(update_fields=["enabled", "updated_at"])
+        return Response(self.get_serializer(toggle).data)
 
 
 class GameTelemetryView(APIView):

@@ -13,7 +13,12 @@ class Subscription(models.Model):
         related_name="subscription",
     )
     is_premium = models.BooleanField(default=False)
+    # Generations consumed in the CURRENT monthly window. Reset to 0 (lazily)
+    # the first time the user is seen in a new calendar month — see
+    # apps.subscriptions.services. `usage_period_start` records the first day
+    # of the window the count belongs to.
     usage_count = models.PositiveIntegerField(default=0)
+    usage_period_start = models.DateField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     platform = models.CharField(
         max_length=12, choices=Platform.choices, null=True, blank=True

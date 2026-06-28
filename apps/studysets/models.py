@@ -15,6 +15,9 @@ class StudySet(UUIDModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         PROCESSING = "processing", "Processing"
+        # Some batches have landed and the set is readable, but more are still
+        # generating in the background.
+        PARTIAL = "partial", "Partial"
         READY = "ready", "Ready"
         FAILED = "failed", "Failed"
 
@@ -31,10 +34,20 @@ class StudySet(UUIDModel):
     topics = models.JSONField(default=list)
     # Sectioned study content: [{title, content, example, quiz:[...]}].
     sections = models.JSONField(default=list)
+    # Instant, no-LLM preview computed from the extracted text at the start of
+    # generation: {wordCount, readingMinutes, outline, keyTerms, summary}.
+    # Lets the app show useful content in the first few seconds.
+    preview = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=12, choices=Status.choices, default=Status.PENDING
     )
     error = models.TextField(blank=True, default="")
+
+    # Generation is fanned out into batches (one per ~chunk of the source).
+    # These let the client show "4 of 8 pages ready" and render progressively
+    # while later batches are still running.
+    batches_total = models.PositiveIntegerField(default=0)
+    batches_done = models.PositiveIntegerField(default=0)
 
     # Idempotency: a retried POST with the same key returns the same set.
     idempotency_key = models.CharField(

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Game, GameSession, GameTelemetry
+from .models import Game, GameSession, GameTelemetry, GameToggle
 
 
 class GameSerializer(serializers.ModelSerializer):
@@ -23,6 +23,26 @@ class GameSerializer(serializers.ModelSerializer):
             "min_app_version",
             "sdk_version",
         )
+
+
+class GameToggleSerializer(serializers.ModelSerializer):
+    """The per-game on/off flags the app reads at startup. The client enables
+    games by default and only acts on rows with ``enabled: false``."""
+
+    class Meta:
+        model = GameToggle
+        fields = ("key", "enabled")
+
+
+class GameToggleAdminSerializer(serializers.ModelSerializer):
+    """Full read/write shape for the staff-only games-control API. Unlike the
+    lean public flag serializer, this exposes the label/note and timestamps an
+    admin page needs to render and edit each switch."""
+
+    class Meta:
+        model = GameToggle
+        fields = ("key", "label", "enabled", "note", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
 
 
 class GameTelemetrySerializer(serializers.Serializer):

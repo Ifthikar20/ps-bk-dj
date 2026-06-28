@@ -9,14 +9,16 @@ class Rank:
     threshold: int
 
 
+# `emoji` is kept (blank) so the API shape is unchanged; clients render ranks
+# with their own iconography rather than emoji.
 RANKS = [
-    Rank("Novice", "🌱", 0),
-    Rank("Explorer", "🧭", 100),
-    Rank("Scholar", "📖", 300),
-    Rank("Strategist", "♟️", 600),
-    Rank("Sage", "🦉", 1000),
-    Rank("Master", "🎓", 1500),
-    Rank("Legend", "🏆", 2200),
+    Rank("Novice", "", 0),
+    Rank("Explorer", "", 100),
+    Rank("Scholar", "", 300),
+    Rank("Strategist", "", 600),
+    Rank("Sage", "", 1000),
+    Rank("Master", "", 1500),
+    Rank("Legend", "", 2200),
 ]
 
 

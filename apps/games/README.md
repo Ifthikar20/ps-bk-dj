@@ -40,6 +40,38 @@ Hardening built in:
 - **Telemetry:** `POST /games/telemetry` records `loaded`/`load_failed`/`error`
   from the host so a broken bundle is visible (see GameTelemetry in admin).
 
+### Turning games on/off — including the native, in-app games
+
+`GET /games` only covers the **hosted** bundles above. The **native** games
+(Flappy Pip, the space shooters, the crossword, Super Dash, Guess the Word) are
+Flutter code compiled into the app and are normally always-on. To pull or
+restore one **without an app release**, use the **GameToggle** switch board:
+
+- Django admin → **Game toggles**: one row per game, keyed by its client id
+  (`flappy_web`, `space_shooter_web`, … — the native keys are seeded for you).
+  Untick `enabled` + Save to pull it; tick it back to restore.
+- The app reads `GET /api/v1/games/flags` (`[{key, enabled}]`) at startup and
+  unregisters any key marked `enabled: false`.
+- **Fail-open:** a missing row, or an unreachable server, means the game stays
+  on — so this can never accidentally hide your whole catalog.
+- A disabled flag overrides a *hosted* game too (catch-all kill-switch); hosted
+  games are otherwise switched via the manifest `enabled` field above.
+
+**Control API (staff only).** Toggle games programmatically — the downstream
+API a custom admin page calls, instead of the Django admin UI. Requires a staff
+token; the public `GET /games/flags` reflects the result.
+
+```
+GET    /api/v1/games/toggles/                 list switches + state
+POST   /api/v1/games/toggles/                 add    {key, label?, enabled?}
+GET    /api/v1/games/toggles/{key}/           one switch
+PATCH  /api/v1/games/toggles/{key}/           edit   {"enabled": false}
+DELETE /api/v1/games/toggles/{key}/           remove (game reverts to "on")
+POST   /api/v1/games/toggles/{key}/enable/    turn the game on
+POST   /api/v1/games/toggles/{key}/disable/   turn the game off
+POST   /api/v1/games/toggles/{key}/toggle/    flip it
+```
+
 ## Play tracking + cross-platform scores
 
 The host forwards each game's SDK events here, so play history, save-state and
