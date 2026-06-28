@@ -26,6 +26,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Used by the rewards engine so "today" is correct per user.
     timezone = models.CharField(max_length=64, default="UTC")
 
+    # Free-form client preferences (theme, dashboard flavor, reading font, etc.)
+    # synced across every device. Web and mobile keys coexist in the same blob;
+    # each client reads the keys it understands and ignores the rest.
+    preferences = models.JSONField(default=dict, blank=True)
+
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)

@@ -1,0 +1,20 @@
+{
+  "key": "space_shooter",
+  "slug": "space-shooter",
+  "version": "1",
+  "name": "Space Shooter",
+  "description": "Blast the waves — answer a question to launch the next.",
+  "icon": "rocket_launch",
+  "emoji": "🚀",
+  "coverColors": [
+    "0xFF6B5CE7",
+    "0xFF05060F"
+  ],
+  "difficulty": "hard",
+  "requires": {
+    "quiz": 1
+  },
+  "minAppVersion": "",
+  "enabled": true,
+  "sortOrder": 11
+}

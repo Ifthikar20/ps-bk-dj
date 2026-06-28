@@ -174,6 +174,52 @@
     }
   }
 
+  // --- keyboard controls -----------------------------------------------------
+  // Games are built tap/click-first; this maps physical keys to the on-screen
+  // actions so they're also keyboard-playable (and so the web app can show a
+  // real, per-game control scheme). Each game exposes different elements; a key
+  // is a no-op if its target isn't present, so this is safe for every bundle.
+  (function keyboardLayer() {
+    function click(selector, index) {
+      var els = document.querySelectorAll(selector);
+      var el = index == null ? els[0] : els[index];
+      if (el) {
+        el.click();
+        return true;
+      }
+      return false;
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      var k = e.key;
+      // Number keys -> nth choice (Quiz Rush, Word Pop, etc.)
+      if (/^[1-9]$/.test(k)) {
+        var n = parseInt(k, 10) - 1;
+        if (click('.choice', n) || click('#app button:not([disabled])', n)) {
+          e.preventDefault();
+        }
+        return;
+      }
+      var MAP = {
+        ' ': ['#reveal', '#again', '#start'],
+        Enter: ['#again', '#reveal', '#start'],
+        t: ['#tBtn'], T: ['#tBtn'], ArrowLeft: ['#tBtn'],
+        f: ['#fBtn'], F: ['#fBtn'], ArrowRight: ['#fBtn'],
+        g: ['#got'], G: ['#got'], ArrowUp: ['#got'],
+        m: ['#miss'], M: ['#miss'], ArrowDown: ['#miss'],
+      };
+      var sels = MAP[k];
+      if (sels) {
+        for (var i = 0; i < sels.length; i++) {
+          if (click(sels[i])) {
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    });
+  })();
+
   // Announce readiness as soon as the SDK loads.
   send('ready');
 })();
