@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Flappy Pip</title>
+    <style>
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0e0e14; user-select: none; }
+      #c { display: block; width: 100%; height: 100%; touch-action: none; }
+      .overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 14px; text-align: center;
+        color: #fff; padding: 24px; }
+      .card { background: rgba(20,18,32,.82); backdrop-filter: blur(6px);
+        border-radius: 20px; padding: 22px; max-width: 460px; width: 100%; }
+      .title { font-size: 26px; font-weight: 800; }
+      .muted { color: #b8b4c8; font-size: 14px; }
+      .prompt { font-size: 18px; font-weight: 700; margin: 6px 0 14px; }
+      .choices { display: grid; gap: 10px; }
+      .choice { background: rgba(255,255,255,.1); border: 2px solid transparent;
+        border-radius: 14px; padding: 14px; font-size: 15px; color: #fff; text-align: left;
+        cursor: pointer; }
+      .choice.good { background: #22c55e; border-color: #fff; }
+      .choice.bad { background: #ef4444; border-color: #fff; }
+      .btn { background: #f7941d; color: #1a1a1a; font-weight: 800; border: none;
+        border-radius: 999px; padding: 13px 26px; font-size: 16px; cursor: pointer; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="ui" class="overlay">
+      <div class="card">
+        <div class="title">🐤 Flappy Pip</div>
+        <div class="muted">Tap, click, or press Space to flap through the gaps.</div>
+        <div class="muted">Crash and you can answer a question to revive.</div>
+        <button class="btn" id="start" style="margin-top:14px">Start</button>
+      </div>
+    </div>
+
+    <script src="../../../playstudy-sdk.js"></script>
+    <script>
+      (function () {
+        "use strict";
+        var cv = document.getElementById("c");
+        var ctx = cv.getContext("2d");
+        var ui = document.getElementById("ui");
+
+        var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+        function resize() {
+          W = cv.clientWidth; H = cv.clientHeight;
+          cv.width = W * DPR; cv.height = H * DPR;
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        }
+        window.addEventListener("resize", resize); resize();
+
+        var quiz = [];
+        PlayStudyGame.onInit(function (m) { quiz = (m.quiz || []).filter(function (q) { return q && q.prompt && q.choices; }); });
+
+        var state = "ready"; // ready | play | quiz | over
+        var bird, pipes, score, passed, revives, t, gap, speed, spawnAt;
+
+        function reset() {
+          bird = { x: W * 0.28, y: H / 2, v: 0, r: Math.max(12, Math.min(W, H) * 0.028) };
+          pipes = []; score = 0; passed = 0; revives = 0; t = 0;
+          gap = Math.max(150, H * 0.32); speed = 2.4; spawnAt = 0;
+        }
+        function start() { reset(); state = "play"; ui.classList.add("hidden"); }
+
+        function flap() {
+          if (state === "ready") return start();
+          if (state === "play") bird.v = -Math.max(5.2, H * 0.011);
+        }
+
+        function spawn() {
+          var margin = 60;
+          var gy = margin + Math.random() * (H - gap - margin * 2);
+          pipes.push({ x: W + 40, top: gy, scored: false, w: Math.max(52, W * 0.09) });
+        }
+
+        function crash() {
+          if (quiz.length && revives < 3) { askRevive(); }
+          else end();
+        }
+
+        function end() {
+          state = "over";
+          PlayStudyGame.gameover(score);
+          ui.innerHTML =
+            '<div class="card"><div class="title">Game over</div>' +
+            '<div class="muted" style="font-size:20px;margin:8px 0">Score ' + score + '</div>' +
+            '<button class="btn" id="again">Play again</button></div>';
+          ui.classList.remove("hidden");
+          document.getElementById("again").onclick = start;
+        }
+
+        function askRevive() {
+          state = "quiz";
+          var q = quiz[Math.floor(Math.random() * quiz.length)];
+          var html = '<div class="card"><div class="muted">Answer to revive</div>' +
+            '<div class="prompt">' + esc(q.prompt) + '</div><div class="choices">';
+          q.choices.forEach(function (c, i) { html += '<button class="choice" data-i="' + i + '">' + esc(c) + '</button>'; });
+          html += '</div></div>';
+          ui.innerHTML = html; ui.classList.remove("hidden");
+          var locked = false;
+          ui.querySelectorAll(".choice").forEach(function (b) {
+            b.onclick = function () {
+              if (locked) return; locked = true;
+              var i = +b.getAttribute("data-i");
+              var ok = i === q.correctIndex;
+              ui.querySelectorAll(".choice")[q.correctIndex].classList.add("good");
+              if (!ok) b.classList.add("bad");
+              setTimeout(function () {
+                if (ok) { revive(); } else { end(); }
+              }, 750);
+            };
+          });
+        }
+
+        function revive() {
+          revives++;
+          PlayStudyGame.reward("revive");
+          // clear pipes near the bird and recentre
+          pipes = pipes.filter(function (p) { return p.x > bird.x + 220; });
+          bird.y = H / 2; bird.v = 0;
+          ui.classList.add("hidden");
+          state = "play";
+        }
+
+        // ---- drawing ----------------------------------------------------------
+        function drawBg() {
+          var g = ctx.createLinearGradient(0, 0, 0, H);
+          g.addColorStop(0, "#8a7efa"); g.addColorStop(1, "#1f1b2e");
+          ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        }
+        function drawPipe(p) {
+          ctx.fillStyle = "#6b5ce7";
+          ctx.fillRect(p.x, 0, p.w, p.top);
+          ctx.fillRect(p.x, p.top + gap, p.w, H - p.top - gap);
+          ctx.fillStyle = "rgba(255,255,255,.18)";
+          ctx.fillRect(p.x, p.top - 14, p.w, 14);
+          ctx.fillRect(p.x, p.top + gap, p.w, 14);
+        }
+        function drawPip() {
+          var r = bird.r;
+          ctx.save(); ctx.translate(bird.x, bird.y);
+          ctx.rotate(Math.max(-0.5, Math.min(0.9, bird.v * 0.05)));
+          // body
+          ctx.fillStyle = "#f7941d"; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+          ctx.lineWidth = 2; ctx.strokeStyle = "#1a1a1a"; ctx.stroke();
+          // belly
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.ellipse(r * .15, r * .25, r * .55, r * .5, 0, 0, 7); ctx.fill();
+          // eye
+          ctx.fillStyle = "#1a1a1a"; ctx.beginPath(); ctx.arc(r * .35, -r * .3, r * .16, 0, 7); ctx.fill();
+          // beak
+          ctx.fillStyle = "#e07a12"; ctx.beginPath();
+          ctx.moveTo(r * .8, 0); ctx.lineTo(r * 1.25, -r * .12); ctx.lineTo(r * 1.25, r * .12); ctx.fill();
+          ctx.restore();
+        }
+        function hud() {
+          ctx.fillStyle = "#fff"; ctx.font = "700 28px system-ui";
+          ctx.textAlign = "center"; ctx.fillText(String(score), W / 2, 54);
+          if (revives) { ctx.font = "600 13px system-ui"; ctx.fillStyle = "#ffd9a8";
+            ctx.fillText("revives left: " + (3 - revives), W / 2, 78); }
+        }
+
+        function loop() {
+          requestAnimationFrame(loop);
+          drawBg();
+          if (state === "play") {
+            t++;
+            bird.v += Math.max(0.32, H * 0.0007);
+            bird.y += bird.v;
+            spawnAt -= 1;
+            if (spawnAt <= 0) { spawn(); spawnAt = Math.max(80, 150 - score * 2); }
+            var sp = speed + score * 0.06;
+            for (var i = pipes.length - 1; i >= 0; i--) {
+              var p = pipes[i]; p.x -= sp;
+              if (!p.scored && p.x + p.w < bird.x) {
+                p.scored = true; score++; passed++; PlayStudyGame.score(score);
+                if (passed % 5 === 0) PlayStudyGame.reward("checkpoint");
+              }
+              if (p.x + p.w < -10) pipes.splice(i, 1);
+              // collision
+              if (bird.x + bird.r > p.x && bird.x - bird.r < p.x + p.w &&
+                  (bird.y - bird.r < p.top || bird.y + bird.r > p.top + gap)) crash();
+            }
+            if (bird.y + bird.r > H || bird.y - bird.r < 0) crash();
+          }
+          pipes.forEach(drawPipe);
+          if (state !== "ready") drawPip();
+          if (state === "play") hud();
+        }
+        loop();
+
+        function esc(s) { return String(s).replace(/[&<>"]/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+        document.getElementById("start").onclick = start;
+        cv.addEventListener("pointerdown", function (e) { e.preventDefault(); flap(); });
+        window.addEventListener("keydown", function (e) {
+          if (e.key === " " || e.key === "ArrowUp") { e.preventDefault(); flap(); }
+        });
+      })();
+    </script>
+  </body>
+</html>
